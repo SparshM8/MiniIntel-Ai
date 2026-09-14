@@ -5,10 +5,127 @@ const llmService = require('./llmService');
 const auditService = require('./auditService');
 const miningIntelligenceService = require('./miningIntelligenceService');
 const PDFDocument = require('pdfkit');
-const { Document: DocxDocument, Paragraph, TextRun, Packer, HeadingLevel } = require('docx');
+const {
+  Document: DocxDocument,
+  Paragraph,
+  TextRun,
+  Packer,
+  HeadingLevel,
+  Table,
+  TableRow,
+  TableCell,
+  WidthType,
+  BorderStyle,
+  AlignmentType
+} = require('docx');
+
+// Helper to strip any raw markdown tokens (**bold**, *italic*, # headings, etc.)
+function stripMarkdownArtifacts(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/^#+\s*/g, '')
+    .replace(/\*\*\*(.*?)\*\*\*/g, '$1')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/___(.*?)___/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/_(.*?)_/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^[-*+]\s+/g, '')
+    .replace(/##+/g, '')
+    .trim();
+}
+
+// Helper to parse inline markdown formatting into Docx TextRun array
+function parseInlineDocxRuns(text, baseOptions = {}) {
+  if (!text) return [new TextRun({ text: '', ...baseOptions })];
+  const regex = /(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|\*[^*]+\*|___[^_]+___|__[^_]+__|_[^_]+_|`[^`]+`)/g;
+  const parts = String(text).split(regex);
+  const runs = [];
+
+  for (const part of parts) {
+    if (!part) continue;
+    if ((part.startsWith('***') && part.endsWith('***')) || (part.startsWith('___') && part.endsWith('___'))) {
+      const clean = part.slice(3, -3);
+      runs.push(new TextRun({ text: clean, bold: true, italics: true, ...baseOptions }));
+    } else if ((part.startsWith('**') && part.endsWith('**')) || (part.startsWith('__') && part.endsWith('__'))) {
+      const clean = part.slice(2, -2);
+      runs.push(new TextRun({ text: clean, bold: true, ...baseOptions }));
+    } else if ((part.startsWith('*') && part.endsWith('*') && part.length > 2) || (part.startsWith('_') && part.endsWith('_') && part.length > 2)) {
+      const clean = part.slice(1, -1);
+      runs.push(new TextRun({ text: clean, italics: true, ...baseOptions }));
+    } else if (part.startsWith('`') && part.endsWith('`')) {
+      const clean = part.slice(1, -1);
+      runs.push(new TextRun({ text: clean, font: 'Consolas', ...baseOptions }));
+    } else {
+      const clean = part.replace(/\*\*/g, '').replace(/\*/g, '').replace(/^#+\s*/g, '');
+      if (clean) {
+        runs.push(new TextRun({ text: clean, ...baseOptions }));
+      }
+    }
+  }
+
+  return runs.length > 0 ? runs : [new TextRun({ text: '', ...baseOptions })];
+}
+
+// Helper to render PDF inline formatting with PDFKit
+function renderPdfFormattedLine(doc, line) {
+  const cleanLine = String(line || '').trim();
+  if (!cleanLine) return;
+
+  const regex = /(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|\*[^*]+\*|___[^_]+___|__[^_]+__|_[^_]+_|`[^`]+`)/g;
+  const parts = cleanLine.split(regex);
+  const tokens = [];
+
+  for (const part of parts) {
+    if (!part) continue;
+    if ((part.startsWith('***') && part.endsWith('***')) || (part.startsWith('___') && part.endsWith('___'))) {
+      tokens.push({ text: part.slice(3, -3), bold: true, italics: true });
+    } else if ((part.startsWith('**') && part.endsWith('**')) || (part.startsWith('__') && part.endsWith('__'))) {
+      tokens.push({ text: part.slice(2, -2), bold: true });
+    } else if ((part.startsWith('*') && part.endsWith('*') && part.length > 2) || (part.startsWith('_') && part.endsWith('_') && part.length > 2)) {
+      tokens.push({ text: part.slice(1, -1), italics: true });
+    } else if (part.startsWith('`') && part.endsWith('`')) {
+      tokens.push({ text: part.slice(1, -1), font: 'Courier' });
+    } else {
+      const clean = part.replace(/\*\*/g, '').replace(/\*/g, '').replace(/^#+\s*/g, '');
+      if (clean) tokens.push({ text: clean });
+    }
+  }
+
+  if (tokens.length === 0) return;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    const isLast = i === tokens.length - 1;
+    let fontName = 'Helvetica';
+    if (tok.bold && tok.italics) fontName = 'Helvetica-BoldOblique';
+    else if (tok.bold) fontName = 'Helvetica-Bold';
+    else if (tok.italics) fontName = 'Helvetica-Oblique';
+    else if (tok.font === 'Courier') fontName = 'Courier';
+
+    doc.font(fontName).fontSize(9.5).fillColor('#1e293b').text(tok.text, { continued: !isLast });
+  }
+  doc.moveDown(0.25);
+}
 
 const generateReport = async (data, type, userId, reqContext = {}) => {
-  const { documentId, instructions, template, period, mineName, subsidiary, subject } = data || {};
+  const {
+    documentId,
+    instructions,
+    template,
+    period,
+    mineName,
+    subsidiary,
+    subject,
+    title,
+    keyAreas,
+    comparisonPeriod,
+    includeRecommendations = true,
+    includeAppendix = true
+  } = data || {};
 
   // Set reqContext flags for quota isolation and strict mode
   reqContext.isReport = true;
@@ -18,10 +135,13 @@ const generateReport = async (data, type, userId, reqContext = {}) => {
 
   // Build targeted RAG search query
   let searchQuery = type;
+  if (title) searchQuery += ' ' + title.trim();
   if (instructions) searchQuery += ' ' + instructions.trim();
   if (template) searchQuery += ' ' + template.trim();
   if (period) searchQuery += ' ' + period.trim();
   if (mineName) searchQuery += ' ' + mineName.trim();
+  if (subject) searchQuery += ' ' + subject.trim();
+  if (Array.isArray(keyAreas) && keyAreas.length > 0) searchQuery += ' ' + keyAreas.join(' ');
 
   // Scoped RAG filters
   const ragFilters = {};
@@ -113,26 +233,57 @@ const generateReport = async (data, type, userId, reqContext = {}) => {
     ? fullContext.substring(0, 6000) + '\n\n[... Remaining data bounded to protect API limits]'
     : fullContext;
 
-  // 3. Evidence-First Prompt Construction
-  const systemPrompt = `You are an expert mining operations analyst for MineIntel. Generate a highly professional '${type}' report based ONLY on the provided context and verified metrics.
+  // 3. Evidence-First Enterprise Prompt Construction
+  const keyAreasList = Array.isArray(keyAreas) && keyAreas.length > 0
+    ? keyAreas.join(', ')
+    : 'Production, Dispatch, Target Variance, Equipment Reliability, Operational Constraints';
 
-CRITICAL GUIDELINES:
-1. Ground every claim, figure, and variance directly in the provided evidence.
-2. Use the deterministic calculation metrics in the context as verified ground truth. Do NOT invent conflicting numbers.
-3. CITATION RULES:
-   - If a source reference has a bracketed page number (e.g., [Page 3]), cite it accurately.
-   - If a source says [Page N/A] or does not specify a page, cite only the document title or reference number. NEVER guess or infer page numbers.
-4. Professional Structure:
-   - Executive Summary
-   - Production Performance
-   - Dispatch Performance
-   - Target Achievement & Variance Analysis
-   - Production-Dispatch Gap
-   - Key Operational Risks & Constraints
-   - Strategic Recommendations
-5. Include a concluding "## Evidence Appendix" section listing the exact sources used, their document names, page numbers, and key excerpts.
+  const reportMainTitle = (title && typeof title === 'string' && title.trim())
+    ? title.trim()
+    : `${type} Report - ${period ? period.trim() : new Date().toLocaleDateString('en-GB')}`;
 
-Additional Instructions: ${instructions || 'None'}
+  const systemPrompt = `You are an expert Chief Mining Intelligence Officer & Enterprise Report Author for MineIntel AI.
+Generate a comprehensive, publication-grade enterprise mining report of type '${type}' grounded STRICTLY in the provided evidence context and verified deterministic calculations.
+
+ENTERPRISE REPORT REQUIREMENTS:
+1. STRUCTURE & SECTIONS (strictly use this hierarchy):
+   # ${reportMainTitle}
+   
+   ## 1. Executive Summary
+   - A formal executive overview summarizing operations, performance highlights, and critical findings.
+   - Ground truth context: Period: ${period || 'Current Operational Period'}, Mine/Subsidiary: ${mineName || subsidiary || 'All Monitored Mines'}${comparisonPeriod ? `, Comparison Period: ${comparisonPeriod}` : ''}${subject ? `, Department/Subject: ${subject}` : ''}.
+
+   ## 2. Key Operational Metrics
+   - Provide a structured Markdown table summarizing the core metrics extracted from the records.
+   - Format:
+     | Metric | Period | Actual | Target | Variance | Status |
+     | --- | --- | --- | --- | --- | --- |
+     (Include actual extracted values, units such as MT, BCM, %, and deterministic variances).
+
+   ## 3. Detailed Operational Analysis
+   - In-depth, analytical breakdown across key focus areas: ${keyAreasList}.
+   - Clear thematic subsections addressing excavation, production volumes, dispatch logistics, and operational bottlenecks.
+
+   ## 4. Variance & Trend Analysis
+   - Concrete comparison of actual performance against targets and prior periods.
+   - Explain the operational causes behind positive or negative variances using extracted evidence.
+
+   ## 5. Operational Risks & Constraints
+   - Critical risks, bottlenecks, equipment constraints, safety considerations, or data anomalies observed in the logs.
+
+   ${includeRecommendations ? `## 6. Strategic Recommendations
+   - Actionable, numbered recommendations with prioritized timeframes (Immediate / Medium-Term / Strategic) to rectify variances and optimize extraction/dispatch.` : ''}
+
+   ${includeAppendix ? `## ${includeRecommendations ? '7' : '6'}. Evidence Appendix & Citations
+   - Detailed listing of source documents, specific page citations, and verified evidence excerpts supporting the findings.` : ''}
+
+CRITICAL RULES FOR ENTERPRISE QUALITY:
+- NO conversational AI preamble (e.g. NEVER write "Here is your report", "Certainly", "Based on your request", or "As an AI"). Start directly with the Level 1 Title heading.
+- Ground all numbers, units, periods, and mine names in the provided evidence. DO NOT hallucinate conflicting numbers.
+- Format all Markdown tables strictly with standard pipe syntax and clean alignments.
+- When citing sources, use the exact document name and bracketed page number [Page X] when available; if [Page N/A], cite the document name only.
+
+Additional Instructions: ${instructions || 'Focus on factual accuracy, concrete operational metrics, and actionable executive insights.'}
 
 Evidence Context:
 ${boundedFullContext}`;
@@ -141,7 +292,7 @@ ${boundedFullContext}`;
   let reportContent = '';
   try {
     if (process.env.LLM_API_KEY === 'mock-key-for-testing') {
-      reportContent = `# ${type} Mining Report\n\n## Executive Summary\nProduction operations summary based on available mining records.\n\n## Production Performance\nProduction achieved target specifications.\n\n## Evidence Appendix\nAll data grounded in verified operational logs.`;
+      reportContent = `# ${reportMainTitle}\n\n## 1. Executive Summary\nProduction operations summary based on available mining records.\n\n## 2. Key Operational Metrics\n| Metric | Period | Actual | Target | Variance | Status |\n| --- | --- | --- | --- | --- | --- |\n| Coal Production | ${period || 'FY 2023-24'} | 4.2 MT | 4.0 MT | +5.0% | On Track |\n\n## 3. Detailed Operational Analysis\nProduction achieved target specifications across key seams.\n\n## 4. Variance & Trend Analysis\nPositive variance recorded in primary excavation.\n\n## 5. Operational Risks & Constraints\nLogistical dispatch constraints noted during peak periods.\n\n${includeRecommendations ? '## 6. Strategic Recommendations\n1. Optimize haulage dispatch fleet cycles.\n\n' : ''}${includeAppendix ? '## Evidence Appendix & Citations\nAll data grounded in verified operational logs.' : ''}`;
     } else {
       reportContent = await llmService.callLLM(systemPrompt, 'Generate the complete professional report using the verified evidence.', {
         reqContext,
@@ -201,11 +352,9 @@ ${boundedFullContext}`;
     : 0.85;
   const confidenceScore = Math.min(0.98, Math.max(0.75, Math.round(avgSimilarity * 100) / 100));
 
-  const reportTitle = `${type} Report - ${new Date().toLocaleDateString('en-GB')}`;
-
   // 8. Persist genuine report to MongoDB ONLY upon successful generation
   const report = new Report({
-    title: reportTitle,
+    title: reportMainTitle,
     type: type,
     content: {
       markdown: reportContent,
@@ -216,7 +365,12 @@ ${boundedFullContext}`;
         period: period || '',
         mineName: mineName || '',
         subsidiary: subsidiary || '',
-        subject: subject || ''
+        subject: subject || '',
+        title: reportMainTitle,
+        keyAreas: Array.isArray(keyAreas) ? keyAreas : (keyAreas ? [keyAreas] : []),
+        comparisonPeriod: comparisonPeriod || '',
+        includeRecommendations: includeRecommendations !== false,
+        includeAppendix: includeAppendix !== false
       },
       sources: similarChunks.map(c => ({
         documentId: c.documentId?._id || c.documentId,
@@ -251,50 +405,168 @@ ${boundedFullContext}`;
   return report;
 };
 
-// Generate Binary PDF buffer
+// Generate Binary PDF buffer with zero markdown artifacts
 const generatePdfBuffer = async (report, markdown, sources) => {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, info: { Title: report.title, Author: 'MineIntel AI' } });
+    const doc = new PDFDocument({
+      margin: 50,
+      info: { Title: report.title || 'Mining Report', Author: 'MineIntel AI Enterprise' }
+    });
     const buffers = [];
     doc.on('data', buffers.push.bind(buffers));
     doc.on('end', () => resolve(Buffer.concat(buffers)));
     doc.on('error', reject);
 
-    // Header
-    doc.fontSize(20).fillColor('#b45309').text(report.title, { underline: true });
-    doc.moveDown(0.5);
-    doc.fontSize(10).fillColor('#64748b').text(`Type: ${report.type} | Status: ${(report.status || 'draft').toUpperCase()} | Generated: ${new Date(report.createdAt).toLocaleDateString()} | Version: ${report.version || 1}`);
-    doc.moveDown(0.2);
-    doc.text(`Confidence Score: ${Math.round((report.confidenceScore || 0) * 100)}% | Evidence Coverage: ${report.evidenceCoverage?.percentage || 0}%`);
-    doc.moveDown(1);
+    // Official Header Banner
+    doc.fontSize(8).fillColor('#64748b').font('Helvetica-Bold').text('MINEINTEL AI  |  ENTERPRISE MINING INTELLIGENCE REPORT', { characterSpacing: 1 });
+    doc.moveDown(0.4);
 
-    // Body
-    doc.fontSize(11).fillColor('#1e293b');
+    // Title
+    doc.fontSize(18).fillColor('#92400e').font('Helvetica-Bold').text(stripMarkdownArtifacts(report.title || 'Mining Report'));
+    doc.moveDown(0.4);
+
+    // Metadata Box
+    const startY = doc.y;
+    doc.rect(50, startY, 495, 34).fillAndStroke('#f8fafc', '#e2e8f0');
+    doc.fontSize(8.5).fillColor('#334155').font('Helvetica-Bold');
+    doc.text(`Type: ${report.type || 'Report'}   |   Status: ${(report.status || 'draft').toUpperCase()}   |   Date: ${new Date(report.createdAt || Date.now()).toLocaleDateString('en-GB')}   |   Version: ${report.version || 1}`, 58, startY + 7);
+    doc.fontSize(8).fillColor('#64748b').font('Helvetica');
+    doc.text(`Confidence Score: ${Math.round((report.confidenceScore || 0) * 100)}%   |   Evidence Coverage: ${report.evidenceCoverage?.percentage || 0}%`, 58, startY + 20);
+
+    doc.y = startY + 44;
+    doc.moveDown(0.5);
+
+    // Body parsing
     const lines = (markdown || '').split('\n');
-    for (const line of lines) {
-      if (line.startsWith('# ')) {
-        doc.moveDown(0.5).fontSize(16).fillColor('#b45309').text(line.replace('# ', '')).fontSize(11).fillColor('#1e293b');
-      } else if (line.startsWith('## ')) {
-        doc.moveDown(0.4).fontSize(13).fillColor('#334155').text(line.replace('## ', '')).fontSize(11).fillColor('#1e293b');
-      } else if (line.startsWith('### ')) {
-        doc.moveDown(0.3).fontSize(11).fillColor('#475569').text(line.replace('### ', '')).fontSize(11).fillColor('#1e293b');
-      } else if (line.trim().length > 0) {
-        doc.text(line);
-      } else {
+    let i = 0;
+
+    while (i < lines.length) {
+      const rawLine = lines[i];
+      const trimmed = rawLine.trim();
+
+      if (!trimmed) {
         doc.moveDown(0.3);
+        i++;
+        continue;
       }
+
+      // 1. Table Detection
+      if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+        const tableLines = [];
+        while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
+          tableLines.push(lines[i].trim());
+          i++;
+        }
+
+        const dataRows = [];
+        let headerRow = null;
+
+        for (const rowStr of tableLines) {
+          if (/^\|[\s\-:|]+\|$/.test(rowStr)) continue;
+          const cols = rowStr.split('|').map(c => stripMarkdownArtifacts(c.trim())).filter((_, idx, arr) => idx !== 0 && idx !== arr.length - 1);
+          if (!headerRow) headerRow = cols;
+          else dataRows.push(cols);
+        }
+
+        if (headerRow && headerRow.length > 0) {
+          const colWidth = 495 / headerRow.length;
+          const startX = 50;
+
+          if (doc.y + 40 > doc.page.height - 60) doc.addPage();
+
+          // Draw header
+          const headY = doc.y;
+          doc.rect(startX, headY, 495, 20).fillAndStroke('#e2e8f0', '#cbd5e1');
+          doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(8.5);
+          headerRow.forEach((h, hIdx) => {
+            doc.text(h, startX + (hIdx * colWidth) + 4, headY + 5, { width: colWidth - 8, lineBreak: false });
+          });
+          doc.y = headY + 22;
+
+          // Draw data rows
+          dataRows.forEach((row, rIdx) => {
+            if (doc.y + 20 > doc.page.height - 60) doc.addPage();
+            const rowY = doc.y;
+            const bg = rIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
+            doc.rect(startX, rowY, 495, 18).fillAndStroke(bg, '#f1f5f9');
+            doc.fillColor('#334155').font('Helvetica').fontSize(8);
+            row.forEach((cell, cIdx) => {
+              doc.text(cell || '', startX + (cIdx * colWidth) + 4, rowY + 4, { width: colWidth - 8, lineBreak: false });
+            });
+            doc.y = rowY + 19;
+          });
+          doc.moveDown(0.6);
+        }
+        continue;
+      }
+
+      // Check page boundary
+      if (doc.y > doc.page.height - 70) doc.addPage();
+
+      // 2. Headings
+      if (trimmed.startsWith('# ')) {
+        const clean = stripMarkdownArtifacts(trimmed.replace(/^#\s+/, ''));
+        doc.moveDown(0.5).fontSize(14).font('Helvetica-Bold').fillColor('#92400e').text(clean).fontSize(10).fillColor('#1e293b').font('Helvetica');
+        i++;
+        continue;
+      }
+      if (trimmed.startsWith('## ')) {
+        const clean = stripMarkdownArtifacts(trimmed.replace(/^##\s+/, ''));
+        doc.moveDown(0.4).fontSize(12).font('Helvetica-Bold').fillColor('#0f172a').text(clean).fontSize(10).fillColor('#1e293b').font('Helvetica');
+        i++;
+        continue;
+      }
+      if (trimmed.startsWith('### ')) {
+        const clean = stripMarkdownArtifacts(trimmed.replace(/^###\s+/, ''));
+        doc.moveDown(0.3).fontSize(10.5).font('Helvetica-Bold').fillColor('#334155').text(clean).fontSize(10).fillColor('#1e293b').font('Helvetica');
+        i++;
+        continue;
+      }
+      if (trimmed.startsWith('#### ')) {
+        const clean = stripMarkdownArtifacts(trimmed.replace(/^####\s+/, ''));
+        doc.moveDown(0.25).fontSize(9.5).font('Helvetica-Bold').fillColor('#475569').text(clean).fontSize(10).fillColor('#1e293b').font('Helvetica');
+        i++;
+        continue;
+      }
+
+      // 3. Bullet points / Lists
+      if (/^[-*+]\s+/.test(trimmed)) {
+        const clean = stripMarkdownArtifacts(trimmed.replace(/^[-*+]\s+/, ''));
+        doc.font('Helvetica').fontSize(9.5).fillColor('#1e293b').text(`  •  ${clean}`, { indent: 10 });
+        i++;
+        continue;
+      }
+      if (/^\d+\.\s+/.test(trimmed)) {
+        const clean = stripMarkdownArtifacts(trimmed);
+        doc.font('Helvetica').fontSize(9.5).fillColor('#1e293b').text(`  ${clean}`, { indent: 10 });
+        i++;
+        continue;
+      }
+
+      // 4. Standard Paragraph with inline bold/italic parser
+      renderPdfFormattedLine(doc, trimmed);
+      i++;
     }
 
     // Evidence Appendix
     if (sources && sources.length > 0) {
-      doc.addPage();
-      doc.fontSize(16).fillColor('#b45309').text('Evidence Appendix & Citations', { underline: true });
+      if (doc.y > doc.page.height - 120) doc.addPage();
+      else doc.moveDown(0.8);
+
+      doc.fontSize(13).font('Helvetica-Bold').fillColor('#92400e').text('Evidence Appendix & Verified Citations', { underline: true });
       doc.moveDown(0.5);
+
       sources.forEach((s, idx) => {
-        doc.fontSize(11).fillColor('#0f172a').text(`[${idx + 1}] ${s.documentName || 'Document'} - Page ${s.pageNumber || 'N/A'}`);
-        if (s.similarity) doc.fontSize(9).fillColor('#64748b').text(`Similarity Match: ${Math.round(s.similarity * 100)}%`);
-        if (s.excerpt) doc.fontSize(10).fillColor('#334155').text(`"${s.excerpt.trim()}"`);
-        doc.moveDown(0.5);
+        if (doc.y > doc.page.height - 80) doc.addPage();
+        const docName = stripMarkdownArtifacts(s.documentName || 'Mining Document');
+        const pageStr = s.pageNumber != null ? `Page ${s.pageNumber}` : 'Page N/A';
+        const simStr = s.similarity ? ` (Match: ${Math.round(s.similarity * 100)}%)` : '';
+
+        doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`[${idx + 1}] ${docName} - ${pageStr}${simStr}`);
+        if (s.excerpt) {
+          doc.fontSize(8.5).font('Helvetica-Oblique').fillColor('#475569').text(`"${stripMarkdownArtifacts(s.excerpt).trim()}"`, { indent: 15 });
+        }
+        doc.moveDown(0.3);
       });
     }
 
@@ -302,51 +574,199 @@ const generatePdfBuffer = async (report, markdown, sources) => {
   });
 };
 
-// Generate Binary DOCX buffer
+// Generate Binary DOCX buffer with zero markdown artifacts
 const generateDocxBuffer = async (report, markdown, sources) => {
   const children = [];
 
+  // Title
   children.push(new Paragraph({
-    text: report.title,
+    text: stripMarkdownArtifacts(report.title || 'Mining Operations Report'),
     heading: HeadingLevel.TITLE
   }));
 
-  children.push(new Paragraph({
-    children: [
-      new TextRun({ text: `Type: ${report.type} | Status: ${(report.status || 'draft').toUpperCase()} | Version: ${report.version || 1}`, bold: true }),
-    ]
-  }));
+  // Metadata Paragraphs
+  const metaRuns = [
+    new TextRun({ text: 'Type: ', bold: true }),
+    new TextRun({ text: `${report.type || 'Operational Report'}  |  ` }),
+    new TextRun({ text: 'Status: ', bold: true }),
+    new TextRun({ text: `${(report.status || 'draft').toUpperCase()}  |  ` }),
+    new TextRun({ text: 'Version: ', bold: true }),
+    new TextRun({ text: `${report.version || 1}  |  ` }),
+    new TextRun({ text: 'Date: ', bold: true }),
+    new TextRun({ text: `${new Date(report.createdAt || Date.now()).toLocaleDateString('en-GB')}` })
+  ];
+  children.push(new Paragraph({ children: metaRuns }));
 
-  children.push(new Paragraph({
-    children: [
-      new TextRun({ text: `Confidence: ${Math.round((report.confidenceScore || 0) * 100)}% | Evidence Coverage: ${report.evidenceCoverage?.percentage || 0}%`, italics: true })
-    ]
-  }));
+  if (report.confidenceScore || report.evidenceCoverage) {
+    children.push(new Paragraph({
+      children: [
+        new TextRun({ text: `Confidence Score: ${Math.round((report.confidenceScore || 0) * 100)}%   |   Evidence Coverage: ${report.evidenceCoverage?.percentage || 0}%`, italics: true, color: '64748B' })
+      ]
+    }));
+  }
 
   children.push(new Paragraph({ text: '' }));
 
+  // Parse lines into Headings, Tables, Lists, and Formatted Paragraphs
   const lines = (markdown || '').split('\n');
-  for (const line of lines) {
-    if (line.startsWith('# ')) {
-      children.push(new Paragraph({ text: line.replace('# ', ''), heading: HeadingLevel.HEADING_1 }));
-    } else if (line.startsWith('## ')) {
-      children.push(new Paragraph({ text: line.replace('## ', ''), heading: HeadingLevel.HEADING_2 }));
-    } else if (line.startsWith('### ')) {
-      children.push(new Paragraph({ text: line.replace('### ', ''), heading: HeadingLevel.HEADING_3 }));
-    } else if (line.trim().length > 0) {
-      children.push(new Paragraph({ children: [new TextRun(line)] }));
+  let i = 0;
+
+  while (i < lines.length) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      i++;
+      continue;
     }
+
+    // 1. Table Detection
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const tableLines = [];
+      while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
+        tableLines.push(lines[i].trim());
+        i++;
+      }
+
+      const dataRows = [];
+      let headerRow = null;
+
+      for (let tIdx = 0; tIdx < tableLines.length; tIdx++) {
+        const rowStr = tableLines[tIdx];
+        if (/^\|[\s\-:|]+\|$/.test(rowStr)) {
+          continue; // Separator row
+        }
+        const cols = rowStr.split('|').map(c => c.trim()).filter((_, idx, arr) => idx !== 0 && idx !== arr.length - 1);
+        if (!headerRow) {
+          headerRow = cols;
+        } else {
+          dataRows.push(cols);
+        }
+      }
+
+      if (headerRow && headerRow.length > 0) {
+        const tableRows = [
+          new TableRow({
+            tableHeader: true,
+            children: headerRow.map(col => new TableCell({
+              shading: { fill: 'F1F5F9' },
+              children: [new Paragraph({
+                children: parseInlineDocxRuns(col, { bold: true, color: '0F172A' })
+              })]
+            }))
+          }),
+          ...dataRows.map(row => new TableRow({
+            children: headerRow.map((_, colIdx) => new TableCell({
+              children: [new Paragraph({
+                children: parseInlineDocxRuns(row[colIdx] || '')
+              })]
+            }))
+          }))
+        ];
+
+        children.push(new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: tableRows
+        }));
+        children.push(new Paragraph({ text: '' }));
+      }
+      continue;
+    }
+
+    // 2. Headings
+    if (trimmed.startsWith('# ')) {
+      children.push(new Paragraph({
+        text: stripMarkdownArtifacts(trimmed.replace(/^#\s+/, '')),
+        heading: HeadingLevel.HEADING_1
+      }));
+      i++;
+      continue;
+    }
+    if (trimmed.startsWith('## ')) {
+      children.push(new Paragraph({
+        text: stripMarkdownArtifacts(trimmed.replace(/^##\s+/, '')),
+        heading: HeadingLevel.HEADING_2
+      }));
+      i++;
+      continue;
+    }
+    if (trimmed.startsWith('### ')) {
+      children.push(new Paragraph({
+        text: stripMarkdownArtifacts(trimmed.replace(/^###\s+/, '')),
+        heading: HeadingLevel.HEADING_3
+      }));
+      i++;
+      continue;
+    }
+    if (trimmed.startsWith('#### ')) {
+      children.push(new Paragraph({
+        text: stripMarkdownArtifacts(trimmed.replace(/^####\s+/, '')),
+        heading: HeadingLevel.HEADING_4
+      }));
+      i++;
+      continue;
+    }
+
+    // 3. Bullet points / Lists
+    if (/^[-*+]\s+/.test(trimmed)) {
+      const content = trimmed.replace(/^[-*+]\s+/, '');
+      children.push(new Paragraph({
+        children: [
+          new TextRun({ text: '•  ', bold: true, color: 'D97706' }),
+          ...parseInlineDocxRuns(content)
+        ],
+        indent: { left: 400 }
+      }));
+      i++;
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const numMatch = trimmed.match(/^(\d+\.)\s+(.*)$/);
+      if (numMatch) {
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: numMatch[1] + '  ', bold: true }),
+            ...parseInlineDocxRuns(numMatch[2])
+          ],
+          indent: { left: 400 }
+        }));
+        i++;
+        continue;
+      }
+    }
+
+    // 4. Standard Paragraph
+    children.push(new Paragraph({
+      children: parseInlineDocxRuns(trimmed)
+    }));
+    i++;
   }
 
+  // Evidence Appendix if sources provided
   if (sources && sources.length > 0) {
-    children.push(new Paragraph({ text: 'Evidence Appendix', heading: HeadingLevel.HEADING_1 }));
+    children.push(new Paragraph({ text: '' }));
+    children.push(new Paragraph({
+      text: 'Evidence Appendix & Verified Citations',
+      heading: HeadingLevel.HEADING_1
+    }));
     sources.forEach((s, idx) => {
       children.push(new Paragraph({
         children: [
-          new TextRun({ text: `[${idx + 1}] ${s.documentName || 'Document'} (Page ${s.pageNumber || 'N/A'})`, bold: true }),
-          new TextRun({ text: `\n"${s.excerpt || ''}"`, italics: true })
+          new TextRun({ text: `[${idx + 1}] ${stripMarkdownArtifacts(s.documentName || 'Mining Document')}`, bold: true, color: '0F172A' }),
+          new TextRun({ text: ` (Page ${s.pageNumber != null ? s.pageNumber : 'N/A'})`, italics: true, color: '64748B' }),
+          new TextRun({ text: s.similarity ? ` - Match: ${Math.round(s.similarity * 100)}%` : '', color: '059669' })
         ]
       }));
+      if (s.excerpt) {
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: `"${stripMarkdownArtifacts(s.excerpt).trim()}"`, italics: true, color: '334155' })
+          ],
+          indent: { left: 400 }
+        }));
+      }
+      children.push(new Paragraph({ text: '' }));
     });
   }
 
