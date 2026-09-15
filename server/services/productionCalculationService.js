@@ -14,12 +14,7 @@ const units = new Map([
   ['million tonnes', 1000000], ['million tonne', 1000000]
 ]);
 
-const sourceOf = (record) => ({
-  recordId: record._id,
-  documentId: record.documentId?._id || record.documentId,
-  documentName: record.documentId?.originalName || record.documentId?.filename || null,
-  pageNumber: Number.isInteger(record.pageNumber) && record.pageNumber > 0 ? record.pageNumber : null
-});
+const { recordSource: sourceOf } = require('../utils/recordSource');
 
 function calculateProductionMetrics(records) {
   const groups = new Map();

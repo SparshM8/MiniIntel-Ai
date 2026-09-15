@@ -45,7 +45,13 @@ const analyze = async (options = {}, { ExtractedRecord, ragService }) => {
     summaryText += `Variance (production-target): ${display(row.variance)}; Variance %: ${display(row.variancePercentage)}; Achievement %: ${display(row.achievementPercentage)}\n`;
     summaryText += `Dispatch gap (production-dispatch): ${display(row.dispatchGap)}; Dispatch %: ${display(row.dispatchPercentage)}\n`;
     for (const [role, sources] of Object.entries(row.sources)) {
-      for (const source of sources) summaryText += `Source ${role}: ${source.documentName || source.documentId}; record ${source.recordId}; page ${source.pageNumber ?? 'unavailable'}\n`;
+      for (const source of sources) {
+        const ref = source.cellReference;
+        const location = ref
+          ? `sheet ${ref.sheetName || 'unavailable'}; cell ${ref.cellAddress || 'unavailable'}; ${ref.status}; ${ref.reason}`
+          : `page ${source.pageNumber ?? 'unavailable'}`;
+        summaryText += `Source ${role}: ${source.documentName || source.documentId}; record ${source.recordId}; ${location}\n`;
+      }
     }
   }
 
