@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { extractionApi, validationApi, documentApi } from '../api';
 import RecordTable from '../components/extraction/RecordTable';
 import RecordEditor from '../components/extraction/RecordEditor';
@@ -23,18 +23,24 @@ const ExtractionReview = () => {
   const [extracting, setExtracting] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
   const [message, setMessage] = useState(null);
+  const activeDocument = useRef('');
+  const requestVersion = useRef(0);
 
   useEffect(() => {
     loadDocuments();
   }, []);
 
-  useEffect(() => {
-    if (selectedDocument) {
-      loadRecords(selectedDocument);
-      setMessage(null);
-    } else {
-      setRecords([]);
-    }
+    useEffect(() => {
+    activeDocument.current = selectedDocument;
+    setRecords([]);
+    setEditingRecord(null);
+    setMessage(null);
+    if (selectedDocument) loadRecords(selectedDocument);
+    else setLoading(false);
+    return () => {
+      activeDocument.current = '';
+      requestVersion.current += 1;
+    };
   }, [selectedDocument]);
 
   const loadDocuments = async () => {
@@ -42,17 +48,22 @@ const ExtractionReview = () => {
     setDocuments(docs || []);
   };
 
-  const loadRecords = async (docId) => {
+    const loadRecords = async (docId) => {
+    if (docId !== activeDocument.current) return;
+    const version = ++requestVersion.current;
     setLoading(true);
     try {
       const data = await extractionApi.getExtractedRecords(docId);
-      setRecords(data || []);
+      if (version !== requestVersion.current) return;
+      setRecords(Array.isArray(data) ? data : []);
     } catch (error) {
+      if (version !== requestVersion.current) return;
+      setRecords([]);
       console.error(error);
       const errMsg = error.response?.data?.details || error.response?.data?.error || error.response?.data?.message || error.message || 'Failed to load records.';
       setMessage({ type: 'error', text: `Failed to load records: ${errMsg}` });
-    } finally {
-      setLoading(false);
+        } finally {
+      if (version === requestVersion.current) setLoading(false);
     }
   };
 
@@ -193,6 +204,7 @@ const ExtractionReview = () => {
       ) : (
         // Data Table
         <RecordTable 
+          key={selectedDocument}
           records={records}
           onEdit={(record) => setEditingRecord(record)}
           onApprove={handleApprove}

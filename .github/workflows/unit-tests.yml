@@ -47,3 +47,16 @@ jobs:
           node-version: '20'
       - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
       - run: npm run build --prefix client
+
+  reviewer-browser:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
+      - run: npx playwright install chromium
+        working-directory: client
+      - run: npm run test:browser --prefix client
