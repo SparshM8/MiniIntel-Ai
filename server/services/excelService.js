@@ -1,7 +1,7 @@
 const { collectSpreadsheetEvidence } = require('../utils/spreadsheetEvidence');
 
 const extractExcelText = async (filePath, xlsx = require('xlsx')) => {
-  const workbook = xlsx.readFile(filePath, { cellFormula: true, cellNF: true, cellText: true });
+  const workbook = xlsx.readFile(filePath, { cellFormula: true, cellNF: true, cellText: true, sheetStubs: true });
   const pages = [];
   
   workbook.SheetNames.forEach((sheetName, index) => {

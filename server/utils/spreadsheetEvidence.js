@@ -7,9 +7,11 @@ function collectSpreadsheetEvidence(sheetName, sheet) {
   let bytes = 0;
   let omittedCells = 0;
   for (const [address, cell] of Object.entries(sheet)) {
-    if (!/^[A-Z]+[1-9]\d*$/.test(address) || !cell || cell.t === 'z') continue;
+    if (!/^[A-Z]+[1-9]\d*$/.test(address) || !cell) continue;
     const formula = typeof cell.f === 'string' ? cell.f : null;
-    const raw = cell.v;
+    if (cell.t === 'z' && !formula) continue;
+    // XLSX represents uncached formulas as stubs with a synthetic v: 0.
+    const raw = cell.t === 'z' ? null : cell.v;
     const rawValue = raw instanceof Date ? raw.toISOString() :
       (typeof raw === 'string' || typeof raw === 'boolean' || (typeof raw === 'number' && Number.isFinite(raw)) ? raw : null);
     if (rawValue === null && !formula) continue;
