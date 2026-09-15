@@ -194,7 +194,9 @@ test('completed action with failed refresh warns and reload does not repeat muta
 test('bulk success uses returned records and clears selection', async ({ page }) => {
   let completed = false;
   await openReview(page, {
-    '/api/v1/extraction/records/bulk-approve': route => { completed = true; return route.fulfill({ json: {} }); },
+    '/api/v1/extraction/records/bulk-approve': route => { completed = true; return route.fulfill({ json: {
+      requestedCount: 1, matchedCount: 1, modifiedCount: 1, unmatchedCount: 0
+    } }); },
     '/api/v1/extraction/doc-a': route => route.fulfill({ json: [{ ...fact, status: completed ? 'approved' : 'pending' }] })
   });
   await page.getByRole('checkbox', { name: 'Select Coal Production' }).check();
@@ -202,6 +204,20 @@ test('bulk success uses returned records and clears selection', async ({ page })
   await expect(page.getByText('approved', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve Selected (0)', exact: true })).toBeDisabled();
 });
+
+for (const [name, result, message] of [
+  ['unmatched', { requestedCount: 1, matchedCount: 0, modifiedCount: 0, unmatchedCount: 1 }, '1 unmatched'],
+  ['legacy', { message: 'Records approved successfully' }, 'counts unavailable']
+]) {
+  test(`bulk ${name} result warns instead of clearing selection`, async ({ page }) => {
+    await openReview(page, { '/api/v1/extraction/records/bulk-approve': route => route.fulfill({ json: result }) });
+    const checkbox = page.getByRole('checkbox', { name: 'Select Coal Production' });
+    await checkbox.check();
+    await page.getByRole('button', { name: 'Approve Selected (1)', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText(message);
+    await expect(checkbox).toBeChecked();
+  });
+}
 
 test('save deadline unlocks draft and read-only server check does not resubmit', async ({ page }) => {
   let writes = 0;

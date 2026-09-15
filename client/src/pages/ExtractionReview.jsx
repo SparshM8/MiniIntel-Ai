@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { extractionApi, validationApi, documentApi } from '../api';
 import RecordTable from '../components/extraction/RecordTable';
+import { bulkReviewOutcome } from '../utils/bulkReviewOutcome';
 import RecordEditor from '../components/extraction/RecordEditor';
 import { FileText, Play, AlertCircle, CheckCircle, Loader2, Database, ChevronDown } from 'lucide-react';
 import BackButton from '../components/common/BackButton';
@@ -102,7 +103,7 @@ const ExtractionReview = () => {
     setMessage({ type: 'success', text: 'Record changes saved.' });
   };
 
-    const reviewAction = async (label, operation) => {
+    const reviewAction = async (label, operation, summarize) => {
     if (reviewLock.current || extracting) return false;
     reviewLock.current = true;
     setReviewPending(true);
@@ -111,7 +112,8 @@ const ExtractionReview = () => {
     const isCurrent = () => activeDocument.current === docId && requestVersion.current === version;
     setMessage({ type: 'info', text: `${label} request pending...` });
     try {
-      await operation();
+      const result = await operation();
+      const outcome = summarize?.(result);
       if (!isCurrent()) return false;
       // Refresh authoritative status; do not infer bulk success for individual records.
       try {
@@ -119,8 +121,11 @@ const ExtractionReview = () => {
         if (!Array.isArray(data)) throw new Error('Invalid records response');
         if (!isCurrent()) return false;
         setRecords(data);
-        setMessage({ type: 'success', text: `${label} request completed; records refreshed.` });
-        return true;
+                setMessage({
+          type: outcome && !outcome.complete ? 'error' : 'success',
+          text: outcome ? `${outcome.text} Records refreshed.` : `${label} request completed; records refreshed.`
+        });
+        return outcome ? outcome.complete : true;
       } catch {
         if (isCurrent()) setMessage({ type: 'error', text: `${label} request completed, but status refresh failed. Displayed statuses may be stale. Reload records before retrying.` });
         return false;
@@ -139,7 +144,7 @@ const ExtractionReview = () => {
 
   const handleApprove = id => reviewAction('Approval', () => extractionApi.approveRecord(id));
   const handleReject = id => reviewAction('Rejection', () => extractionApi.rejectRecord(id));
-  const handleBulkApprove = ids => reviewAction('Bulk approval', () => extractionApi.bulkApprove(ids));
+  const handleBulkApprove = ids => reviewAction('Bulk approval', () => extractionApi.bulkApprove(ids), bulkReviewOutcome);
 
   return (
     <div className="p-3 md:p-4 max-w-[1400px] mx-auto text-gray-800 dark:text-[#94a3b8]">
