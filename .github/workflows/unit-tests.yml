@@ -38,6 +38,18 @@ jobs:
       - name: Test real parsers and Mongoose validation without a database
         run: npm run test:integration --prefix server
 
+  mongodb-persistence:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --prefix server --ignore-scripts --no-audit --no-fund
+      - name: Test review writes against a temporary loopback MongoDB
+        run: npm run test:persistence --prefix server
+
   client-build:
     runs-on: ubuntu-latest
     steps:
