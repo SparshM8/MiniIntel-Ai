@@ -1,14 +1,8 @@
-const ExtractedRecord = require('../models/ExtractedRecord');
-const ragService = require('./ragService');
+const { calculateProductionMetrics } = require('./productionCalculationService');
 
-function parseNumeric(val) {
-  if (val === null || val === undefined) return null;
-  const cleaned = val.toString().replace(/,/g, '').replace(/[^0-9.-]/g, '');
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? null : num;
-}
+const exactMatch = (value) => new RegExp(`^${String(value).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
 
-exports.analyzeDataAndFindAnomalies = async (options = {}) => {
+const analyze = async (options = {}, { ExtractedRecord, ragService }) => {
   const opts = options || {};
   const reqContext = opts.reqContext || (opts.isComplex !== undefined ? opts : null);
   const filters = opts.filters || {};
@@ -23,188 +17,36 @@ exports.analyzeDataAndFindAnomalies = async (options = {}) => {
     recordQuery.documentId = documentId;
   }
   if (mineName) {
-    recordQuery.mineName = new RegExp(mineName, 'i');
+    recordQuery.mineName = exactMatch(mineName);
   }
   if (subsidiary) {
-    recordQuery.subsidiary = new RegExp(subsidiary, 'i');
+    recordQuery.subsidiary = exactMatch(subsidiary);
   }
   if (period) {
-    recordQuery.period = new RegExp(period, 'i');
+    recordQuery.period = exactMatch(period);
   }
 
-  // Prioritize approved records; fall back to all records if none approved yet
-  let records = await ExtractedRecord.find({ ...recordQuery, status: 'approved' })
+  // Never broaden an empty scope or substitute unreviewed records.
+  const records = await ExtractedRecord.find({ ...recordQuery, status: 'approved' })
     .populate('documentId', 'originalName title filename')
-    .lean();
+        .lean();
 
-  if (records.length === 0 && documentId) {
-    records = await ExtractedRecord.find({ documentId })
-      .populate('documentId', 'originalName title filename')
-      .lean();
-  } else if (records.length === 0 && Object.keys(recordQuery).length > 0) {
-    records = await ExtractedRecord.find(recordQuery)
-      .populate('documentId', 'originalName title filename')
-      .limit(50)
-      .lean();
-  }
-
-  // Fallback to general approved records if still empty (capped at 40)
-  if (records.length === 0) {
-    records = await ExtractedRecord.find({ status: 'approved' })
-      .populate('documentId', 'originalName title filename')
-      .limit(40)
-      .lean();
-  }
-
-  // Group by parameter ('production', 'dispatch', 'target', 'overburden', etc.)
-  const metrics = {};
-  const mineBreakdown = {};
-
-  for (const r of records) {
-    if (!r.parameter || r.value === undefined || !r.period) continue;
-    const p = r.parameter.toLowerCase().trim();
-    const per = r.period.trim();
-    const mine = r.mineName || r.subsidiary || 'General';
-
-    if (!metrics[p]) metrics[p] = {};
-    if (!metrics[p][per]) metrics[p][per] = [];
-    metrics[p][per].push(r);
-
-    if (!mineBreakdown[mine]) mineBreakdown[mine] = { production: 0, dispatch: 0, target: 0 };
-    const num = parseNumeric(r.value) || 0;
-    if (p.includes('prod')) mineBreakdown[mine].production += num;
-    if (p.includes('disp')) mineBreakdown[mine].dispatch += num;
-    if (p.includes('targ')) mineBreakdown[mine].target += num;
-  }
-
-  const anomalies = [];
-  let summaryText = '=== DETERMINISTIC CALCULATIONS & HISTORICAL COMPARISONS ===\n\n';
-
-  // Deterministic calculation: Period-over-period comparisons
-  for (const [metricName, periodGroups] of Object.entries(metrics)) {
-    const sortedPeriods = Object.keys(periodGroups).sort();
-    if (sortedPeriods.length < 2) continue;
-
-    for (let i = 1; i < sortedPeriods.length; i++) {
-      const prevPeriod = sortedPeriods[i - 1];
-      const currPeriod = sortedPeriods[i];
-
-      const prevRecords = periodGroups[prevPeriod];
-      const currRecords = periodGroups[currPeriod];
-
-      const prevVal = prevRecords.reduce((sum, r) => sum + (parseNumeric(r.value) || 0), 0);
-      const currVal = currRecords.reduce((sum, r) => sum + (parseNumeric(r.value) || 0), 0);
-      const unit = currRecords[0].unit || prevRecords[0].unit || 'units';
-
-      const pageNumbers = [...new Set(currRecords.map(r => r.pageNumber).filter(p => p != null))].join(', ');
-      const pageStr = pageNumbers ? `Page(s) ${pageNumbers}` : 'Page N/A';
-
-      if (prevVal === 0) continue;
-
-      const absChange = currVal - prevVal;
-      const pctChange = (absChange / prevVal) * 100;
-
-      summaryText += `- Metric: ${metricName.toUpperCase()}\n`;
-      summaryText += `  Period: ${prevPeriod} -> ${currPeriod}\n`;
-      summaryText += `  Values: ${prevVal.toLocaleString()} -> ${currVal.toLocaleString()} ${unit}\n`;
-      summaryText += `  Change: ${absChange >= 0 ? '+' : ''}${absChange.toFixed(2)} (${pctChange >= 0 ? '+' : ''}${pctChange.toFixed(2)}%)\n`;
-      summaryText += `  Source Metadata: ${pageStr}\n\n`;
-
-      // Anomaly detection
-      let reasonFlagged = null;
-      if (pctChange <= -10) {
-        reasonFlagged = `${metricName} significantly decreased by ${Math.abs(pctChange).toFixed(1)}%`;
-      } else if (pctChange >= 20) {
-        reasonFlagged = `${metricName} significantly increased by ${pctChange.toFixed(1)}%`;
-      }
-
-      if (reasonFlagged) {
-        anomalies.push({
-          metric: metricName,
-          currentValue: currVal,
-          comparisonValue: prevVal,
-          change: absChange,
-          percentage: pctChange,
-          period: currPeriod,
-          comparisonPeriod: prevPeriod,
-          reason: reasonFlagged,
-          unit: unit,
-          records: currRecords
-        });
-      }
+  const calculation = calculateProductionMetrics(records);
+  const anomalies = calculation.anomalies;
+  let summaryText = '=== SCOPED PRODUCTION CALCULATIONS ===\n';
+  summaryText += 'Unavailable values are not zero. No historical trends or rankings are inferred.\n';
+  summaryText += `Scope warnings: ${calculation.warnings.length}. Rows: ${calculation.rows.length}.\n`;
+  if (!calculation.rows.length) summaryText += 'Insufficient approved, supported records for this scope.\n';
+  for (const row of calculation.rows) {
+    const display = (value) => value === null ? 'unavailable' : String(value);
+    summaryText += `\nEntity: ${row.subsidiary} / ${row.mineName}; Period: ${row.period}; Unit: tonnes\n`;
+    summaryText += `Warnings: ${row.warnings.map(w => `${w.role}:${w.code}`).join(', ') || 'none'}\n`;
+    summaryText += `Production: ${display(row.production)}; Target: ${display(row.target)}; Dispatch: ${display(row.dispatch)}\n`;
+    summaryText += `Variance (production-target): ${display(row.variance)}; Variance %: ${display(row.variancePercentage)}; Achievement %: ${display(row.achievementPercentage)}\n`;
+    summaryText += `Dispatch gap (production-dispatch): ${display(row.dispatchGap)}; Dispatch %: ${display(row.dispatchPercentage)}\n`;
+    for (const [role, sources] of Object.entries(row.sources)) {
+      for (const source of sources) summaryText += `Source ${role}: ${source.documentName || source.documentId}; record ${source.recordId}; page ${source.pageNumber ?? 'unavailable'}\n`;
     }
-  }
-
-  // Deterministic calculation: Target vs Production variance
-  const prodKey = Object.keys(metrics).find(k => k.includes('prod')) || 'production';
-  const targetKey = Object.keys(metrics).find(k => k.includes('targ')) || 'target';
-  const dispatchKey = Object.keys(metrics).find(k => k.includes('disp')) || 'dispatch';
-
-  const prodGroup = metrics[prodKey] || {};
-  const targetGroup = metrics[targetKey] || {};
-  const dispatchGroup = metrics[dispatchKey] || {};
-
-  summaryText += '=== DETERMINISTIC TARGET & DISPATCH METRICS ===\n\n';
-
-  for (const p of Object.keys(prodGroup)) {
-    const prodVal = prodGroup[p].reduce((sum, r) => sum + (parseNumeric(r.value) || 0), 0);
-    const targetVal = targetGroup[p] ? targetGroup[p].reduce((sum, r) => sum + (parseNumeric(r.value) || 0), 0) : 0;
-    const dispVal = dispatchGroup[p] ? dispatchGroup[p].reduce((sum, r) => sum + (parseNumeric(r.value) || 0), 0) : 0;
-    const unit = prodGroup[p][0]?.unit || 'tonnes';
-
-    const pageNumbers = [...new Set(prodGroup[p].map(r => r.pageNumber).filter(pg => pg != null))].join(', ');
-    const pageStr = pageNumbers ? `Page(s) ${pageNumbers}` : 'Page N/A';
-
-    summaryText += `Period: ${p}\n`;
-    summaryText += `  Actual Production: ${prodVal.toLocaleString()} ${unit}\n`;
-
-    if (targetVal > 0) {
-      const variance = prodVal - targetVal;
-      const pctVariance = (variance / targetVal) * 100;
-      const achievementRate = (prodVal / targetVal) * 100;
-      summaryText += `  Target: ${targetVal.toLocaleString()} ${unit}\n`;
-      summaryText += `  Target Variance: ${variance >= 0 ? '+' : ''}${variance.toFixed(2)} (${pctVariance >= 0 ? '+' : ''}${pctVariance.toFixed(2)}%)\n`;
-      summaryText += `  Target Achievement Rate: ${achievementRate.toFixed(1)}%\n`;
-
-      if (pctVariance <= -10) {
-        anomalies.push({
-          metric: 'Production vs Target',
-          currentValue: prodVal,
-          comparisonValue: targetVal,
-          change: variance,
-          percentage: pctVariance,
-          period: p,
-          comparisonPeriod: 'Target',
-          reason: `Production fell below target by ${Math.abs(pctVariance).toFixed(1)}%`,
-          unit: unit,
-          records: prodGroup[p]
-        });
-      }
-    }
-
-    if (dispVal > 0) {
-      const gap = prodVal - dispVal;
-      const dispatchRate = prodVal > 0 ? (dispVal / prodVal) * 100 : 0;
-      summaryText += `  Actual Dispatch: ${dispVal.toLocaleString()} ${unit}\n`;
-      summaryText += `  Production-Dispatch Gap: ${gap.toFixed(2)} ${unit} (Dispatch rate: ${dispatchRate.toFixed(1)}%)\n`;
-    }
-
-    summaryText += `  Source Metadata: ${pageStr}\n\n`;
-  }
-
-  // Deterministic calculation: Mine Volume Rankings
-  const mineEntries = Object.entries(mineBreakdown).filter(([_, data]) => data.production > 0);
-  if (mineEntries.length > 1) {
-    mineEntries.sort((a, b) => b[1].production - a[1].production);
-    summaryText += '=== DETERMINISTIC MINE RANKINGS BY PRODUCTION ===\n';
-    mineEntries.forEach(([mine, data], idx) => {
-      summaryText += `${idx + 1}. ${mine}: Production = ${data.production.toLocaleString()} | Dispatch = ${data.dispatch.toLocaleString()}\n`;
-    });
-    summaryText += '\n';
-  }
-
-  if (anomalies.length === 0) {
-    summaryText += 'No significant negative operational anomalies detected.\n';
   }
 
   // 3. Evidence Retrieval for top anomalies (STRICTLY CAPPED TO TOP 2 TO PREVENT API LIMITS)
@@ -222,7 +64,12 @@ exports.analyzeDataAndFindAnomalies = async (options = {}) => {
       try {
         const query = `Why did ${anom.metric} vary in ${anom.period}? Equipment downtime, weather, maintenance, logistics, constraints.`;
         // Top 2 chunks per anomaly with safe timeout and embedding quota protection
-        const similarChunks = await ragService.searchSimilar(query, 2, { reqContext });
+        const similarChunks = await ragService.searchSimilar(query, 2, {
+          reqContext,
+          user: opts.user,
+          filters: { ...filters, ...(documentId ? { documentId } : {}),
+            mine: anom.mineName, subsidiary: anom.subsidiary, period: anom.period }
+        });
 
         if (similarChunks && similarChunks.length > 0) {
           evidenceText += 'Retrieved Evidence:\n';
@@ -243,7 +90,7 @@ exports.analyzeDataAndFindAnomalies = async (options = {}) => {
         }
       } catch (ragErr) {
         console.warn(`[Mining Intelligence] Evidence search skipped for anomaly (${anom.period}):`, ragErr.message);
-        evidenceText += 'Supporting documentary evidence was omitted to preserve API context limits.\n\n';
+        evidenceText += 'Supporting documentary evidence retrieval failed; the cause of this variance is unverified.\n\n';
       }
     }
   }
@@ -255,7 +102,17 @@ exports.analyzeDataAndFindAnomalies = async (options = {}) => {
   return {
     summaryText: boundedSummary,
     evidenceText: boundedEvidence,
-    anomalies: topAnomalies,
-    combinedSources
+        anomalies: topAnomalies,
+    combinedSources,
+    calculations: calculation.rows,
+    calculationWarnings: calculation.warnings
   };
 };
+
+exports.createMiningIntelligenceService = (dependencies) => ({
+  analyzeDataAndFindAnomalies: (options) => analyze(options, dependencies)
+});
+exports.analyzeDataAndFindAnomalies = (options) => analyze(options, {
+  ExtractedRecord: require('../models/ExtractedRecord'),
+  ragService: require('./ragService')
+});
