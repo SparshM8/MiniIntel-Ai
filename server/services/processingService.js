@@ -1,4 +1,5 @@
 const path = require('path');
+const { toDocumentPageRecord } = require('../utils/documentPageRecord');
 const Document = require('../models/Document');
 const ProcessingJob = require('../models/ProcessingJob');
 const DocumentPage = require('../models/DocumentPage');
@@ -103,12 +104,7 @@ const processDocument = async (documentId) => {
     let concatenatedText = '';
     const pageRecords = extractedPages.map(p => {
       concatenatedText += p.content + '\n\n';
-      return {
-        documentId: document._id,
-        pageNumber: p.pageNumber,
-        content: p.content,
-        wordCount: p.wordCount
-      };
+            return toDocumentPageRecord(document._id, p);
     });
 
     await DocumentPage.insertMany(pageRecords);
