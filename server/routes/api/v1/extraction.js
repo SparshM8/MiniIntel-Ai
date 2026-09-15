@@ -8,6 +8,7 @@ const Document = require('../../../models/Document');
 const { authenticate } = require('../../../middleware/auth');
 const { sendSuccess, sendError } = require('../../../utils/apiResponse');
 const validate = require('../../../validators/validate');
+const { validateBulkReviewIds } = require('../../../utils/bulkReviewIds');
 const { validateRunExtraction, validateRecordUpdate } = require('../../../validators/extractionValidator');
 
 // Helper: Check valid ObjectId
@@ -401,18 +402,21 @@ router.post('/records/:id/reject', authenticate, async (req, res, next) => {
 // POST /api/v1/extraction/records/bulk-approve
 router.post('/records/bulk-approve', authenticate, async (req, res, next) => {
   try {
-    const { ids } = req.body;
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return sendError(res, 'Invalid or empty IDs array', 'INVALID_INPUT', 400);
+        const validated = validateBulkReviewIds(req.body?.ids);
+    if (validated.error) return sendError(res, validated.error, 'INVALID_INPUT', 400);
+    const { ids, duplicateCount } = validated;
+    const records = await ExtractedRecord.find({ _id: { $in: ids } }).select('_id documentId').lean();
+    const documentIds = [...new Set(records.map(record => record.documentId.toString()))];
+    // Check every matched document before issuing any mutation.
+    for (const documentId of documentIds) {
+      const access = await checkDocumentAccess(documentId, req.user);
+      if (access.error) return sendError(res, access.error, access.code, access.status);
     }
-
-    const validIds = ids.filter(isValidId);
-    if (validIds.length === 0) {
-      return sendError(res, 'No valid record IDs provided', 'INVALID_INPUT', 400);
-    }
-
+    // Restrict the write to checked record/document pairs, not newly appearing IDs.
+    const filter = records.length ? { $or: records.map(record => ({ _id: record._id, documentId: record.documentId })) }
+      : { _id: { $in: [] } };
     const result = await ExtractedRecord.updateMany(
-      { _id: { $in: validIds } },
+      filter,
       {
         $set: {
           status: 'approved',
@@ -424,8 +428,9 @@ router.post('/records/bulk-approve', authenticate, async (req, res, next) => {
 
     return sendSuccess(
       res,
-      { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount },
-      'Records approved successfully'
+            { requestedCount: ids.length, duplicateCount, matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount, unmatchedCount: ids.length - result.matchedCount },
+      'Bulk approval request completed'
     );
   } catch (error) {
     next(error);
