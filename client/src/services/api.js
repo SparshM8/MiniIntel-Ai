@@ -37,8 +37,9 @@ export const getDocuments = async (params) => {
   const res = await apiClient.get('/documents', { params });
   const rawList = Array.isArray(res.data?.data)
     ? res.data.data
-    : (Array.isArray(res.data) ? res.data : []);
-  const hybridArray = toHybridArray(rawList, res.data || {});
+    : (Array.isArray(res.data) ? res.data : null);
+      if (!rawList) throw new Error('Unexpected document list response');
+      const hybridArray = toHybridArray(rawList, res.data || {});
 
   return {
     ...res,

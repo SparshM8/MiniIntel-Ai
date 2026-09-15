@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -12,63 +12,82 @@ const CommandCenter = () => {
   const [orchestratorResult, setOrchestratorResult] = useState(null);
   const [overviewData, setOverviewData] = useState(null);
 
+    const [overviewLoading, setOverviewLoading] = useState(true);
+  const [overviewError, setOverviewError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const taskPending = useRef(false);
+
   useEffect(() => {
-    const fetchOverview = async () => {
-      try {
-        const res = await commandCentreApi.getOverview();
-        setOverviewData(res.data || res);
-      } catch (e) {
-        // Fallback to defaults
-      }
-    };
-    fetchOverview();
-  }, []);
+    let active = true;
+    setOverviewLoading(true);
+    setOverviewError(false);
+    commandCentreApi.getOverview().then(res => {
+      const data = res?.data ?? res;
+      if (!data?.stats || typeof data.stats !== 'object') throw new Error('Invalid overview');
+      if (active) setOverviewData(data);
+    }).catch(() => {
+      if (active) { setOverviewData(null); setOverviewError(true); }
+    }).finally(() => { if (active) setOverviewLoading(false); });
+    return () => { active = false; };
+  }, [reloadKey]);
+
+  const count = value => overviewLoading ? 'Loading…'
+    : !overviewError && Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString() : 'Unavailable';
 
   const stats = [
-    { label: 'Docs Processed', value: overviewData?.documentsProcessed?.toLocaleString() || '1,248', icon: FileText, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-    { label: 'Validation Score', value: overviewData?.validationScore ? `${overviewData.validationScore}%` : '98.5%', icon: CheckCircle, color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20' },
-    { label: 'Open Issues', value: overviewData?.openIssues !== undefined ? String(overviewData.openIssues) : '12', icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-    { label: 'Reports Generated', value: overviewData?.reportsGenerated !== undefined ? String(overviewData.reportsGenerated) : '342', icon: FileOutput, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' }
+    { label: 'Docs Processed', value: count(overviewData?.stats?.docsProcessed?.value), icon: FileText, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+    { label: 'Failed Documents', value: count(overviewData?.systemMetrics?.failedDocuments), icon: AlertTriangle, color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20' },
+    { label: 'Open Issues', value: count(overviewData?.stats?.openIssues?.value), icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+    { label: 'Reports Generated', value: count(overviewData?.stats?.reportsGenerated?.value), icon: FileOutput, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' }
   ];
 
   const handleOrchestrate = async (e) => {
     e.preventDefault();
-    if (!taskInput.trim()) return;
-
+        if (!taskInput.trim() || taskPending.current) return;
+    taskPending.current = true;
     setIsOrchestrating(true);
     setOrchestratorResult(null);
     try {
       const res = await aiAssistantApi.orchestrate(taskInput, { source: 'command-center' });
-      const successMessage = res.data?.message || res.message || 'Task completed successfully.';
+      const body = res?.data ?? res;
+      if (body?.success === false || res?.success === false) throw new Error('Server reported an unsuccessful task. Check its status before retrying.');
+      const successMessage = typeof body?.message === 'string' && body.message.trim()
+        ? body.message : 'Server responded without task details. Completion has not been verified.';
       setOrchestratorResult({ success: true, message: successMessage });
     } catch (err) {
       setOrchestratorResult({ success: false, message: err.message || 'Failed to orchestrate task.' });
     } finally {
+      taskPending.current = false;
       setIsOrchestrating(false);
     }
   };
 
   return (
-    <div className="p-5 max-w-7xl mx-auto space-y-5">
+    <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <Monitor className="w-8 h-8 text-amber-600 dark:text-amber-400" />
         <h1 className="text-3xl font-bold text-neutral-900 dark:text-white">Command Center</h1>
       </div>
 
+      <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">System-wide counts returned by the service, not your filtered document list. Processing and report generation do not establish accuracy or approval.</p>
+      {overviewError && <div role="alert" className="rounded-lg border border-red-200 dark:border-red-800 p-4 text-sm text-red-700 dark:text-red-300">
+        <p>System overview is unavailable. No estimated counts are shown.</p>
+        <button type="button" onClick={() => setReloadKey(key => key + 1)} className="mt-2 min-h-10 underline font-semibold">Reload overview</button>
+      </div>}
       {/* System Stats Summary */}
       <section>
         <h2 className="text-xl font-semibold text-neutral-800 dark:text-neutral-200 mb-4">System Overview</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4">
           {stats.map((stat, idx) => (
-            <div key={idx} className="bg-white dark:bg-dark-card p-5 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+            <section aria-label={stat.label} key={idx} className="bg-white dark:bg-dark-card p-5 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
               <div className={`p-4 rounded-lg ${stat.bg}`}>
                 <stat.icon className={`w-8 h-8 ${stat.color}`} />
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-500 dark:text-slate-400">{stat.label}</p>
                 <p className="text-2xl font-bold text-neutral-900 dark:text-white">{stat.value}</p>
-              </div>
             </div>
+            </section>
           ))}
         </div>
       </section>
@@ -78,9 +97,9 @@ const CommandCenter = () => {
         <div className="p-5 border-b border-slate-200 dark:border-slate-700 bg-neutral-50 dark:bg-dark-bg/50 flex items-center gap-3">
           <Bot className="w-6 h-6 text-amber-500" />
           <div>
-            <h2 className="text-xl font-semibold text-neutral-900 dark:text-white">Multi-Agent Orchestrator</h2>
+            <h2 className="text-xl font-semibold text-neutral-900 dark:text-white">Request an assisted task</h2>
             <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
-              Command the system's agents to perform complex, multi-step tasks across the knowledge base.
+              Describe the documents, period and output you need. Inspect the returned evidence and task status before using the result.
             </p>
           </div>
         </div>
@@ -91,14 +110,14 @@ const CommandCenter = () => {
               <label htmlFor="taskInput" className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
                 New Task Assignment
               </label>
-              <div className="flex gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <input
                   id="taskInput"
                   type="text"
                   value={taskInput}
                   onChange={(e) => setTaskInput(e.target.value)}
                   placeholder='e.g., "Analyze production metrics from last month and generate a summary report"'
-                  className="flex-1 px-4 py-3 bg-white dark:bg-dark-bg border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 dark:text-white transition-shadow text-base"
+                  className="min-w-0 flex-1 px-4 py-3 bg-white dark:bg-dark-bg border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 dark:text-white transition-shadow text-base"
                   disabled={isOrchestrating}
                 />
                 <button
@@ -111,14 +130,14 @@ const CommandCenter = () => {
                   ) : (
                     <Send className="w-5 h-5" />
                   )}
-                  Execute
+                  Send request
                 </button>
               </div>
             </div>
           </form>
 
           {orchestratorResult && (
-            <div className={`mt-4 p-4 rounded-lg border flex items-start gap-3 ${
+            <div role={orchestratorResult.success ? 'status' : 'alert'} className={`mt-4 p-4 rounded-lg border flex items-start gap-3 ${
               orchestratorResult.success 
                 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/50 text-green-800 dark:text-green-300' 
                 : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-800 dark:text-red-300'
@@ -130,7 +149,7 @@ const CommandCenter = () => {
               )}
               <div>
                 <h4 className="font-medium mb-2">
-                  {orchestratorResult.success ? 'Task Accepted' : 'Orchestration Failed'}
+                  {orchestratorResult.success ? 'Server response — review required' : 'Task request not confirmed'}
                 </h4>
                 <div className="prose dark:prose-invert max-w-none prose-sm text-sm opacity-90 prose-p:my-1 prose-headings:my-2 prose-table:my-2 prose-code:before:content-none prose-code:after:content-none">
                   <ReactMarkdown 

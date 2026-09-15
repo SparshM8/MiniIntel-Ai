@@ -5,18 +5,20 @@ const DocumentFilters = ({ onSearchChange, onTypeChange, onStatusChange, search,
   const [localSearch, setLocalSearch] = useState(search || '');
 
   useEffect(() => {
+    if (localSearch === (search || '')) return;
     const timer = setTimeout(() => {
       onSearchChange(localSearch);
     }, 300);
     return () => clearTimeout(timer);
-  }, [localSearch, onSearchChange]);
+  }, [localSearch, search, onSearchChange]);
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 mb-4">
-      <div className="relative flex-1">
+    <div className="flex flex-col xl:flex-row gap-3 mb-4">
+      <div className="relative flex-1 min-w-0">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600 dark:text-slate-400" />
         <input
           type="text"
+          aria-label="Search documents"
           placeholder="Search documents..."
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
@@ -24,6 +26,7 @@ const DocumentFilters = ({ onSearchChange, onTypeChange, onStatusChange, search,
         />
       </div>
       <select
+        aria-label="Document type"
         value={type || ''}
         onChange={(e) => onTypeChange(e.target.value)}
         className="px-4 py-2 bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-neutral-900 dark:text-neutral-100"
@@ -36,6 +39,7 @@ const DocumentFilters = ({ onSearchChange, onTypeChange, onStatusChange, search,
         <option value="image">Image</option>
       </select>
       <select
+        aria-label="Processing status"
         value={status || ''}
         onChange={(e) => onStatusChange(e.target.value)}
         className="px-4 py-2 bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-neutral-900 dark:text-neutral-100"

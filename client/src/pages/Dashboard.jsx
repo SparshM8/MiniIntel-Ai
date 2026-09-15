@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { 
-  FileText, Brain, Activity, Clock, FileUp, 
-  CheckCircle, AlertTriangle, TrendingUp, XCircle, ChevronRight,
+import {
+  Activity, FileUp, ChevronRight,
   Upload, Database, MessageSquare, ArrowRight
 } from 'lucide-react';
 import useDocuments from '../hooks/useDocuments';
@@ -13,36 +12,14 @@ import DocumentList from '../components/documents/DocumentList';
 import DocumentPreview from '../components/documents/DocumentPreview';
 import { Link } from 'react-router-dom';
 
-const StatCard = ({ icon: Icon, label, value, trend, trendUp, colorClass }) => (
-  <div className="hover-lift bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 rounded-lg p-5 shadow-sm">
-    <div className="flex items-center justify-between mb-3">
-      <div className={`p-2.5 rounded-lg ${colorClass}`}>
-        <Icon className="w-5 h-5" />
-      </div>
-      {trend && (
-        <span className={`text-xs font-medium flex items-center gap-1 ${trendUp ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-          {trendUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5 rotate-180" />}
-          {trend}
-        </span>
-      )}
-    </div>
-    <h3 className="text-gray-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider">{label}</h3>
-    <p className="text-2xl font-bold text-neutral-900 dark:text-white mt-1">{value}</p>
-  </div>
-);
+import { DocumentWorkspaceSummary, DocumentNextSteps } from '../components/documents/DocumentWorkspaceSummary';
 
 const Dashboard = () => {
   const [filters, setFilters] = useState({ search: '', type: '', status: '' });
-  const { documents, loading, fetchDocuments } = useDocuments(filters);
+  const { documents, loading, error, fetchDocuments } = useDocuments(filters);
   const [uploads, setUploads] = useState([]);
   const [previewDoc, setPreviewDoc] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-
-  // Derived KPI Calculations
-  const totalDocs = documents?.length || 0;
-  const processedDocs = documents?.filter(d => ['completed', 'extracted'].includes(d.status)).length || 0;
-  const pendingDocs = documents?.filter(d => ['pending', 'processing'].includes(d.status)).length || 0;
-  const failedDocs = documents?.filter(d => d.status === 'failed').length || 0;
+    const [previewOpen, setPreviewOpen] = useState(false);
 
   const handleUpload = async (file) => {
     const uploadId = Date.now().toString();
@@ -114,50 +91,38 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900 dark:text-white tracking-tight">
+          <p className="text-xs font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400 mb-2">Document workspace</p>
+          <h1 className="text-2xl sm:text-3xl font-semibold text-neutral-900 dark:text-white tracking-tight">
             My Dashboard
           </h1>
-          <p className="text-gray-500 dark:text-slate-400 text-sm mt-0.5">Real-time metrics and document processing status.</p>
+          <p className="text-gray-500 dark:text-slate-400 text-sm mt-2 leading-relaxed">Upload sources, check processing status, and review extracted information.</p>
         </div>
-      </div>
+            </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-        <StatCard 
-          icon={FileText} label="Total Documents" value={totalDocs} 
-          trend="+12% this week" trendUp={true} colorClass="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" 
-        />
-        <StatCard 
-          icon={CheckCircle} label="Processed" value={processedDocs} 
-          trend="98% success rate" trendUp={true} colorClass="bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400" 
-        />
-        <StatCard 
-          icon={Clock} label="Pending / Processing" value={pendingDocs} 
-          colorClass="bg-amber-50 text-copper-600 dark:bg-amber-900/20 dark:text-copper-400" 
-        />
-        <StatCard 
-          icon={XCircle} label="Failed Extractions" value={failedDocs} 
-          trend="Needs review" trendUp={false} colorClass="bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400" 
-        />
-      </div>
+      <DocumentWorkspaceSummary
+        documents={documents}
+        loading={loading}
+        error={error}
+        onReload={() => fetchDocuments(filters)}
+      />
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-10 gap-4">
         
         {/* Left Column (Main Content) */}
-        <div className="lg:col-span-7 space-y-4">
+        <div className="lg:col-span-7 min-w-0 space-y-5">
           {/* Quick Access Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
             <Link to="/extraction" className="hover-lift flex items-center p-4 bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-neutral-50 dark:hover:bg-dark-card/50 transition-colors group">
               <div className="p-3 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-lg mr-4">
                 <Upload className="w-5 h-5 group-hover:scale-110 transition-transform" />
               </div>
               <div>
-                <h3 className="font-semibold text-neutral-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">Upload & Extract</h3>
-                <p className="text-sm text-gray-500 dark:text-slate-400">Process new mining documents</p>
+                <h3 className="font-semibold text-neutral-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">Review extraction</h3>
+                <p className="text-sm text-gray-500 dark:text-slate-400">Inspect extracted values and sources</p>
               </div>
               <ArrowRight className="hover-lift-arrow w-5 h-5 ml-auto text-gray-600 dark:text-slate-400 group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors" />
             </Link>
@@ -189,7 +154,7 @@ const Dashboard = () => {
           <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 rounded-lg p-5 shadow-sm hover:border-amber-500/30 transition-colors">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-base font-semibold text-neutral-900 dark:text-white flex items-center gap-2">
-                <FileUp className="w-4 h-4 text-amber-600 dark:text-amber-500" /> Upload & Analyze
+                <FileUp className="w-4 h-4 text-amber-600 dark:text-amber-500" /> Add source documents
               </h2>
             </div>
             <DropZone onUpload={handleUpload} />
@@ -201,7 +166,7 @@ const Dashboard = () => {
           {/* Document Management */}
           <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 rounded-lg p-5 shadow-sm overflow-hidden">
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-base font-semibold text-neutral-900 dark:text-white">Recent Documents</h2>
+              <h2 className="text-base font-semibold text-neutral-900 dark:text-white">Your documents</h2>
               <Link to="/command-center" className="text-xs text-amber-600 dark:text-amber-400 font-medium hover:underline flex items-center gap-1">
                 Command Center <ChevronRight className="w-3.5 h-3.5" />
               </Link>
@@ -216,66 +181,30 @@ const Dashboard = () => {
               onStatusChange={(val) => setFilters(prev => ({ ...prev, status: val }))}
             />
             
-            <div className="mt-4">
-              <DocumentList
-                documents={documents}
-                loading={loading}
-                onPreview={handlePreview}
-                onDelete={handleDelete}
-              />
+                        <div className="mt-4">
+              {!error && (
+                <DocumentList
+                  documents={documents}
+                  loading={loading}
+                  onPreview={handlePreview}
+                  onDelete={handleDelete}
+                />
+              )}
             </div>
           </div>
         </div>
 
         {/* Right Column (Side Panels) */}
-        <div className="lg:col-span-3 space-y-4">
-          {/* AI Insights Panel */}
-          <div className="bg-white dark:bg-[#161B26] rounded-lg p-5 shadow-xs text-slate-900 dark:text-white border border-slate-200 dark:border-[#2B3245]">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Brain className="w-4 h-4 text-copper-500" />
-                <h2 className="text-sm font-bold tracking-tight">Operational Insights</h2>
-              </div>
-              <span className="flex h-1.5 w-1.5 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-copper-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-copper-500"></span>
-              </span>
-            </div>
-            
-            <div className="space-y-2.5">
-              <div className="bg-slate-50 dark:bg-[#0B0E14] rounded-lg p-3 border border-slate-200 dark:border-[#2B3245]">
-                <div className="flex gap-2.5 items-start">
-                  <AlertTriangle className="w-4 h-4 text-copper-500 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-bold text-slate-900 dark:text-white">Production Anomaly</p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">Coal extraction at Mine Alpha is 15% below quarterly target based on recent reports.</p>
-                  </div>
-                </div>
-              </div>
-              <div className="bg-slate-50 dark:bg-[#0B0E14] rounded-lg p-3 border border-slate-200 dark:border-[#2B3245]">
-                <div className="flex gap-2.5 items-start">
-                  <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-bold text-slate-900 dark:text-white">Validation Clean</p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">Last 5 documents parsed with 100% data integrity. No manual review needed.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 pt-3 border-t border-slate-200 dark:border-[#2B3245]">
-              <Link to="/ai-assistant" className="text-xs text-copper-600 dark:text-copper-400 hover:underline font-semibold flex items-center justify-center gap-1.5 transition-colors">
-                Open AI Operations Assistant <TrendingUp className="w-3.5 h-3.5 rotate-45" />
-              </Link>
-            </div>
-          </div>
+                <div className="lg:col-span-3 min-w-0 space-y-5">
+          <DocumentNextSteps />
 
           {/* Processing Activity */}
           <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 rounded-lg p-5 shadow-sm">
             <h2 className="text-base font-semibold text-neutral-900 dark:text-white mb-4 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-gray-500 dark:text-slate-400" /> Activity Feed
+              <Activity className="w-4 h-4 text-gray-500 dark:text-slate-400" /> Document status
             </h2>
             <div className="space-y-4 relative before:absolute before:inset-0 before:ml-[9px] before:-translate-x-px before:h-full before:w-[2px] before:bg-neutral-100 dark:before:bg-dark-card">
-              {documents?.slice(0, 5).map((doc, idx) => (
+              {!loading && !error && documents?.slice(0, 5).map((doc, idx) => (
                 <div key={idx} className="relative flex items-start gap-3">
                   <div className="flex items-center justify-center w-[18px] h-[18px] rounded-full border-[3px] border-white dark:border-dark-card bg-amber-500 shrink-0 z-10 mt-0.5"></div>
                   <div className="flex-1 bg-neutral-50 dark:bg-dark-card p-3 rounded-lg border border-neutral-100 dark:border-slate-700">
@@ -284,13 +213,13 @@ const Dashboard = () => {
                       <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{new Date(doc.uploadedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                     </div>
                     <p className="text-[11px] text-gray-500 dark:text-slate-400 leading-relaxed">
-                      {['completed', 'extracted'].includes(doc.status) ? 'Document processed & successfully indexed into Knowledge Base.' : doc.status === 'failed' ? 'Failed to process document.' : 'Processing initiated...'}
+                      {['completed', 'extracted'].includes(doc.status) ? 'Processing complete. Review extracted information before use.' : doc.status === 'failed' ? 'Failed to process document.' : doc.status === 'pending' ? 'Queued for processing.' : doc.status === 'processing' ? 'Processing in progress.' : 'Status unavailable.'}
                     </p>
                   </div>
                 </div>
-              ))}
-              {(!documents || documents.length === 0) && (
-                <div className="text-[13px] text-gray-500 dark:text-slate-400 text-center py-4 relative z-10">No recent activity</div>
+                            ))}
+              {(loading || error || !documents?.length) && (
+                <div className="text-[13px] text-gray-500 dark:text-slate-400 text-center py-4 relative z-10">{loading ? 'Loading document status…' : error ? 'Document status unavailable' : 'No documents in this view'}</div>
               )}
             </div>
           </div>
