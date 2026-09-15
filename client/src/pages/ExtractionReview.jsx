@@ -87,14 +87,17 @@ const ExtractionReview = () => {
     }
   };
 
-  const handleUpdate = async (id, data) => {
-    try {
-      await extractionApi.updateRecord(id, data);
-      setEditingRecord(null);
-      loadRecords(selectedDocument);
-    } catch (error) {
-      console.error(error);
-    }
+    const handleUpdate = async (id, data) => {
+    const docId = selectedDocument;
+    const version = requestVersion.current;
+    // Reject to the editor so failed saves retain the draft and show an error.
+    await extractionApi.updateRecord(id, data);
+    if (activeDocument.current !== docId || requestVersion.current !== version) return;
+    setRecords(current => current.map(record =>
+      (record.id || record._id) === id ? { ...record, value: data.value, unit: data.unit } : record
+    ));
+    setEditingRecord(null);
+    setMessage({ type: 'success', text: 'Record changes saved.' });
   };
 
   const handleApprove = async (id) => {
