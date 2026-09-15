@@ -1,9 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import RecordEvidence from './RecordEvidence';
 import { Edit2, Check, X, CheckSquare, ShieldAlert, ShieldCheck } from 'lucide-react';
 
-const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) => {
+const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove, busy = false }) => {
   const [selectedIds, setSelectedIds] = useState(new Set());
+
+  useEffect(() => {
+    const available = new Set((records || []).map(record => record.id || record._id));
+    setSelectedIds(current => new Set([...current].filter(id => available.has(id))));
+  }, [records]);
 
   const handleSelectAll = (e) => {
     if (e.target.checked) {
@@ -23,10 +28,10 @@ const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) =>
     setSelectedIds(newSelected);
   };
 
-  const handleBulk = () => {
-    if (selectedIds.size > 0) {
-      onBulkApprove(Array.from(selectedIds));
-      setSelectedIds(new Set());
+    const handleBulk = async () => {
+    if (!busy && selectedIds.size > 0) {
+      const confirmed = await onBulkApprove(Array.from(selectedIds));
+      if (confirmed) setSelectedIds(new Set());
     }
   };
 
@@ -49,7 +54,7 @@ const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) =>
         </span>
         <button
           onClick={handleBulk}
-          disabled={selectedIds.size === 0}
+          disabled={busy || selectedIds.size === 0}
           className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors shadow-sm"
         >
           <CheckSquare className="w-3.5 h-3.5" />
@@ -64,6 +69,8 @@ const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) =>
                 <input 
                   type="checkbox" 
                   className="rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-dark-bg text-amber-500 focus:ring-amber-500 cursor-pointer"
+                  disabled={busy}
+                  aria-label="Select all records"
                   onChange={handleSelectAll}
                   checked={records.length > 0 && selectedIds.size === records.length}
                 />
@@ -87,6 +94,8 @@ const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) =>
                     <input 
                       type="checkbox" 
                       className="rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-dark-bg text-amber-500 focus:ring-amber-500 cursor-pointer"
+                      disabled={busy}
+                      aria-label={`Select ${record.parameter}`}
                       checked={selectedIds.has(id)}
                       onChange={() => handleSelect(id)}
                     />
@@ -127,13 +136,13 @@ const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) =>
                   </td>
                   <td className={`${tdClass} text-right`}>
                     <div className="flex justify-end gap-1.5">
-                      <button onClick={() => onApprove(id)} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-colors" title="Approve">
+                      <button disabled={busy} aria-label={`Approve ${record.parameter}`} onClick={() => onApprove(id)} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-colors" title="Approve">
                         <Check className="w-4 h-4" />
                       </button>
-                      <button onClick={() => onReject(id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Reject">
+                      <button disabled={busy} aria-label={`Reject ${record.parameter}`} onClick={() => onReject(id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Reject">
                         <X className="w-4 h-4" />
                       </button>
-                      <button onClick={() => onEdit(record)} className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded transition-colors" title="Edit">
+                      <button disabled={busy} onClick={() => onEdit(record)} className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded transition-colors" title="Edit">
                         <Edit2 className="w-4 h-4" />
                       </button>
                     </div>

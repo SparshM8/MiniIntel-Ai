@@ -25,6 +25,8 @@ const ExtractionReview = () => {
   const [message, setMessage] = useState(null);
   const activeDocument = useRef('');
   const requestVersion = useRef(0);
+  const reviewLock = useRef(false);
+  const [reviewPending, setReviewPending] = useState(false);
 
   useEffect(() => {
     loadDocuments();
@@ -100,32 +102,44 @@ const ExtractionReview = () => {
     setMessage({ type: 'success', text: 'Record changes saved.' });
   };
 
-  const handleApprove = async (id) => {
+    const reviewAction = async (label, operation) => {
+    if (reviewLock.current || extracting) return false;
+    reviewLock.current = true;
+    setReviewPending(true);
+    const docId = selectedDocument;
+    const version = requestVersion.current;
+    const isCurrent = () => activeDocument.current === docId && requestVersion.current === version;
+    setMessage({ type: 'info', text: `${label} request pending...` });
     try {
-      await extractionApi.approveRecord(id);
-      loadRecords(selectedDocument);
+      await operation();
+      if (!isCurrent()) return false;
+      // Refresh authoritative status; do not infer bulk success for individual records.
+      try {
+        const data = await extractionApi.getExtractedRecords(docId);
+        if (!Array.isArray(data)) throw new Error('Invalid records response');
+        if (!isCurrent()) return false;
+        setRecords(data);
+        setMessage({ type: 'success', text: `${label} request completed; records refreshed.` });
+        return true;
+      } catch {
+        if (isCurrent()) setMessage({ type: 'error', text: `${label} request completed, but status refresh failed. Displayed statuses may be stale. Reload records before retrying.` });
+        return false;
+      }
     } catch (error) {
-      console.error(error);
+      if (isCurrent()) {
+        const detail = error.response?.data?.error || error.message;
+        setMessage({ type: 'error', text: `${label} was not confirmed. Selection retained. Check current status before retrying. ${typeof detail === 'string' ? detail : ''}` });
+      }
+      return false;
+    } finally {
+      reviewLock.current = false;
+      setReviewPending(false);
     }
   };
 
-  const handleReject = async (id) => {
-    try {
-      await extractionApi.rejectRecord(id);
-      loadRecords(selectedDocument);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const handleBulkApprove = async (ids) => {
-    try {
-      await extractionApi.bulkApprove(ids);
-      loadRecords(selectedDocument);
-    } catch (error) {
-      console.error(error);
-    }
-  };
+  const handleApprove = id => reviewAction('Approval', () => extractionApi.approveRecord(id));
+  const handleReject = id => reviewAction('Rejection', () => extractionApi.rejectRecord(id));
+  const handleBulkApprove = ids => reviewAction('Bulk approval', () => extractionApi.bulkApprove(ids));
 
   return (
     <div className="p-3 md:p-4 max-w-[1400px] mx-auto text-gray-800 dark:text-[#94a3b8]">
@@ -150,6 +164,7 @@ const ExtractionReview = () => {
           <div className="relative">
             <select 
               className="w-full appearance-none bg-slate-50 dark:bg-[#1c1f26] border border-slate-200 dark:border-[#2d3139] rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-[#f1f5f9] focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/30 transition-colors pr-10"
+              disabled={reviewPending || extracting}
               value={selectedDocument}
               onChange={(e) => setSelectedDocument(e.target.value)}
             >
@@ -166,7 +181,7 @@ const ExtractionReview = () => {
         
         <button 
           onClick={handleExtract}
-          disabled={!selectedDocument || extracting || loading}
+          disabled={!selectedDocument || extracting || loading || reviewPending}
           className="w-full md:w-auto shrink-0 flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:bg-slate-200 dark:disabled:bg-[#2d3139] disabled:text-gray-400 dark:disabled:text-slate-500 disabled:cursor-not-allowed text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm shadow-amber-500/20 disabled:shadow-none h-[38px]"
         >
           {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
@@ -176,13 +191,18 @@ const ExtractionReview = () => {
 
       {/* Notifications */}
       {message && (
-        <div className={`mb-5 p-3 rounded-lg flex items-center gap-2 text-sm font-medium border
+        <div role={message.type === 'error' ? 'alert' : 'status'} className={`mb-5 p-3 rounded-lg flex items-center gap-2 text-sm font-medium border
           ${message.type === 'error' 
             ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-900/40' 
             : 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/40'}
         `}>
           {message.type === 'error' ? <AlertCircle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
           <span>{message.text}</span>
+          {message.type === 'error' && selectedDocument && (
+            <button type="button" disabled={reviewPending || loading || extracting}
+              onClick={() => { setMessage(null); loadRecords(selectedDocument); }}
+              className="underline shrink-0">Reload records</button>
+          )}
         </div>
       )}
 
@@ -209,6 +229,7 @@ const ExtractionReview = () => {
         <RecordTable 
           key={selectedDocument}
           records={records}
+          busy={reviewPending || extracting}
           onEdit={(record) => setEditingRecord(record)}
           onApprove={handleApprove}
           onReject={handleReject}
