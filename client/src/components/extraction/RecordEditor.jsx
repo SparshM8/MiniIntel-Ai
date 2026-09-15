@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { X, Save } from 'lucide-react';
 import RecordEvidence from './RecordEvidence';
 
@@ -8,6 +8,29 @@ const RecordEditor = ({ record, onSave, onClose }) => {
     unit: record.unit || '',
   });
 
+  const dialogRef = useRef(null);
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const titleId = useId();
+  const valueId = useId();
+  const unitId = useId();
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const opener = document.activeElement;
+    dialog.showModal();
+    dialog.querySelector('input[name="value"]')?.focus();
+    return () => {
+      dialog.close();
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+
+  const handleClose = () => {
+    if (!savingRef.current) onClose();
+  };
+
   const handleChange = (e) => {
     setFormData({
       ...formData,
@@ -15,26 +38,52 @@ const RecordEditor = ({ record, onSave, onClose }) => {
     });
   };
 
-  const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
     e.preventDefault();
-    onSave(formData);
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError('');
+    try {
+      await onSave(formData);
+    } catch (error) {
+      const detail = error.response?.data?.error || error.response?.data?.message || error.message;
+      setSaveError(`Save was not confirmed. Your edits are retained. ${typeof detail === 'string' ? detail : 'Please retry.'}`);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   const inputClass = "w-full bg-white dark:bg-[#1c1f26] border border-slate-200 dark:border-[#2d3139] rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-[#f1f5f9] placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/30 transition-colors";
   const labelClass = "block text-xs font-semibold text-gray-500 dark:text-[#64748b] uppercase tracking-wider mb-1.5";
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="bg-white dark:bg-dark-card rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto border border-slate-200 dark:border-[#2d3139]">
+        <dialog ref={dialogRef} aria-labelledby={titleId} aria-busy={saving}
+      onCancel={(event) => { event.preventDefault(); handleClose(); }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Tab') return;
+        const focusable = [...dialogRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), summary')];
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first?.focus();
+        }
+      }}
+      className="m-auto p-0 w-[calc(100%_-_2rem)] max-w-md max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-dark-card text-gray-900 dark:text-white shadow-2xl backdrop:bg-black/60 border border-slate-200 dark:border-[#2d3139]">
+      <div>
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-[#2d3139] bg-slate-50/50 dark:bg-[#1c1f26]/50">
-          <h3 className="text-base font-bold text-gray-900 dark:text-white">Edit Extracted Record</h3>
-          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#ffffff0a] rounded transition-colors">
+          <h3 id={titleId} className="text-base font-bold text-gray-900 dark:text-white">Edit Extracted Record</h3>
+          <button type="button" aria-label="Close record editor" disabled={saving} onClick={handleClose} className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#ffffff0a] rounded transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
         
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <RecordEvidence record={record} currentValue={formData.value} />
+          {saveError && <p role="alert" className="text-sm text-red-700 dark:text-red-400">{saveError}</p>}
           <div>
             <label className={labelClass}>Parameter</label>
             <input 
@@ -46,47 +95,52 @@ const RecordEditor = ({ record, onSave, onClose }) => {
           </div>
           
           <div>
-            <label className={labelClass}>Value</label>
+            <label htmlFor={valueId} className={labelClass}>Value</label>
             <input 
               type="text" 
+              id={valueId}
+              disabled={saving}
               name="value"
-              value={formData.value} 
+                            value={formData.value}
               onChange={handleChange}
-              className={inputClass}
-              autoFocus
-            />
+              className={inputClass} />
           </div>
           
           <div>
-            <label className={labelClass}>Unit</label>
+            <label htmlFor={unitId} className={labelClass}>Unit</label>
             <input 
               type="text" 
+              id={unitId}
+              disabled={saving}
               name="unit"
               value={formData.unit} 
               onChange={handleChange}
               className={inputClass}
+
             />
           </div>
           
           <div className="flex justify-end gap-3 pt-4 mt-2 border-t border-slate-100 dark:border-[#2d3139]">
             <button 
               type="button" 
-              onClick={onClose}
+              disabled={saving}
+              onClick={handleClose}
               className="px-4 py-2 text-sm font-semibold text-gray-700 dark:text-[#94a3b8] hover:text-gray-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#ffffff0a] rounded-lg transition-colors"
             >
               Cancel
             </button>
             <button 
               type="submit"
+              disabled={saving}
               className="px-4 py-2 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-sm shadow-amber-500/20"
             >
               <Save className="w-4 h-4" />
-              Save Changes
+              {saving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>
-      </div>
     </div>
+    </dialog>
   );
 };
 

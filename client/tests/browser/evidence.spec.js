@@ -77,6 +77,66 @@ test('late response from an old document cannot replace the current records', as
   await expect(page.getByRole('combobox')).toHaveValue('doc-b');
 });
 
+test('dialog traps keyboard focus and Escape restores the edit button', async ({ page }) => {
+  await openReview(page);
+  const edit = page.getByTitle('Edit', { exact: true });
+  await edit.click();
+  const dialog = page.getByRole('dialog', { name: 'Edit Extracted Record' });
+  await expect(dialog.getByLabel('Value', { exact: true })).toBeFocused();
+  for (let i = 0; i < 10; i++) {
+    await page.keyboard.press('Tab');
+    expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  }
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(edit).toBeFocused();
+});
+
+test('failed save retains draft and permits a successful retry', async ({ page }) => {
+  let attempts = 0;
+  await openReview(page, { '/api/v1/extraction/records/record-a': route => {
+    attempts++;
+    expect(route.request().postDataJSON()).toEqual({ value: '10', unit: 'tonnes' });
+    return attempts === 1
+      ? route.fulfill({ status: 500, json: { error: 'Synthetic save failure' } })
+      : route.fulfill({ json: { ...fact, value: '10' } });
+  } });
+  await page.getByTitle('Edit', { exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Value', { exact: true }).fill('10');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Save was not confirmed');
+  await expect(dialog.getByLabel('Value', { exact: true })).toHaveValue('10');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('Record changes saved.')).toBeVisible();
+  await page.locator('summary').click();
+  await expect(page.getByText('Reason: record value changed')).toBeVisible();
+  expect(attempts).toBe(2);
+});
+
+test('pending save blocks duplicate submission and dismissal', async ({ page }) => {
+  let release;
+  let requests = 0;
+  const held = new Promise(resolve => { release = resolve; });
+  await openReview(page, { '/api/v1/extraction/records/record-a': async route => {
+    requests++;
+    await held;
+    await route.fulfill({ json: fact });
+  } });
+  await page.getByTitle('Edit', { exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog.getByRole('button', { name: 'Saving...' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('form').evaluate(form => { form.requestSubmit(); form.requestSubmit(); });
+  release();
+  await expect(dialog).toHaveCount(0);
+  expect(requests).toBe(1);
+});
+
 test('failed document switch does not leave previous evidence visible', async ({ page }) => {
   await openReview(page, { '/api/v1/extraction/doc-b': route => route.fulfill({ status: 500, json: { error: 'Synthetic failure' } }) });
   await expect(page.locator('summary')).toHaveCount(1);
