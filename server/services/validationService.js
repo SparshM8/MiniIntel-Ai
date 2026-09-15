@@ -1,21 +1,11 @@
-const ValidationResult = require('../models/ValidationResult');
-const ExtractedRecord = require('../models/ExtractedRecord');
+const { parseReportedNumber: parseNumber } = require('../utils/parseReportedNumber');
 
 const normalizeStr = (value) =>
   (value ?? '').toString().trim().toLowerCase();
 
-const parseNumber = (value) => {
-  if (value === undefined || value === null || value === '') {
-    return NaN;
-  }
-
-  const cleaned = value
-    .toString()
-    .replace(/,/g, '')
-    .replace(/[^\d.-]/g, '');
-
-  return parseFloat(cleaned);
-};
+const isMissingValue = (value) =>
+  value === undefined || value === null ||
+  (typeof value === 'string' && value.trim() === '');
 
 const isProduction = (parameter) => {
   const value = normalizeStr(parameter);
@@ -49,7 +39,8 @@ const isMonitoredParameter = (parameter) => {
  */
 const createIssueIfNotExists = async (
   issueData,
-  newValidationResults
+  newValidationResults,
+  ValidationResult
 ) => {
   const existing = await ValidationResult.findOne({
     documentId: issueData.documentId,
@@ -70,7 +61,10 @@ const createIssueIfNotExists = async (
   return result;
 };
 
-exports.validateDocument = async (documentId) => {
+const validateDocument = async (documentId, { ValidationResult, ExtractedRecord }) => {
+  const createIssue = (issueData, results) =>
+    createIssueIfNotExists(issueData, results, ValidationResult);
+
   try {
     console.log('\n====================================');
     console.log('VALIDATION STARTED');
@@ -189,12 +183,8 @@ exports.validateDocument = async (documentId) => {
       // Rule 1: Missing value
       // ------------------------------------------------
 
-      if (
-        value === undefined ||
-        value === null ||
-        value.toString().trim() === ''
-      ) {
-        await createIssueIfNotExists(
+      if (isMissingValue(value)) {
+        await createIssue(
           {
             documentId,
             recordId,
@@ -202,6 +192,28 @@ exports.validateDocument = async (documentId) => {
             severity: 'warning',
             field: 'value',
             message: `Missing value for parameter "${parameter}".`,
+            status: 'open'
+          },
+          newValidationResults
+        );
+      }
+
+            // Nonempty numeric fields must be complete, unambiguous numbers.
+      // Keep the original extraction intact so a reviewer can resolve it.
+      if (
+        isMonitoredParameter(parameter) &&
+        !isMissingValue(value) &&
+        Number.isNaN(number)
+      ) {
+        await createIssue(
+          {
+            documentId,
+            recordId,
+            type: 'invalid_value',
+            severity: 'error',
+            field: 'value',
+            message: `Invalid numeric value for "${parameter}". Review the source; use a complete number with units stored separately.`,
+            details: { reason: 'invalid_numeric_format' },
             status: 'open'
           },
           newValidationResults
@@ -217,7 +229,7 @@ exports.validateDocument = async (documentId) => {
         unit === null ||
         unit.toString().trim() === ''
       ) {
-        await createIssueIfNotExists(
+        await createIssue(
           {
             documentId,
             recordId,
@@ -240,7 +252,7 @@ exports.validateDocument = async (documentId) => {
         !isNaN(number) &&
         number < 0
       ) {
-        await createIssueIfNotExists(
+        await createIssue(
           {
             documentId,
             recordId,
@@ -263,7 +275,7 @@ exports.validateDocument = async (documentId) => {
         record.confidenceScore !== null &&
         record.confidenceScore < 0.70
       ) {
-        await createIssueIfNotExists(
+        await createIssue(
           {
             documentId,
             recordId,
@@ -302,7 +314,7 @@ exports.validateDocument = async (documentId) => {
           values.length >= 2 &&
           number > average * 5
         ) {
-          await createIssueIfNotExists(
+          await createIssue(
             {
               documentId,
               recordId,
@@ -369,7 +381,7 @@ exports.validateDocument = async (documentId) => {
             const gap =
               dispatchValue - productionValue;
 
-            await createIssueIfNotExists(
+            await createIssue(
               {
                 documentId: dispatch.documentId,
                 recordId: dispatch._id,
@@ -414,7 +426,7 @@ exports.validateDocument = async (documentId) => {
             productionValue / targetValue;
 
           if (ratio > 1.5 || ratio < 0.5) {
-            await createIssueIfNotExists(
+            await createIssue(
               {
                 documentId: production.documentId,
                 recordId: production._id,
@@ -465,7 +477,7 @@ exports.validateDocument = async (documentId) => {
         for (let i = 1; i < duplicates.length; i++) {
           const duplicate = duplicates[i];
 
-          await createIssueIfNotExists(
+          await createIssue(
             {
               documentId: duplicate.documentId,
               recordId: duplicate._id,
@@ -501,6 +513,18 @@ exports.validateDocument = async (documentId) => {
       error
     );
 
-    throw error;
+        throw error;
   }
 };
+
+// Inject model adapters for isolated service tests without a database connection.
+const createValidationService = (models) => ({
+  validateDocument: (documentId) => validateDocument(documentId, models)
+});
+
+// Resolve production models only when invoked; importing the factory is offline-safe.
+exports.createValidationService = createValidationService;
+exports.validateDocument = (documentId) => createValidationService({
+  ValidationResult: require('../models/ValidationResult'),
+  ExtractedRecord: require('../models/ExtractedRecord')
+}).validateDocument(documentId);
