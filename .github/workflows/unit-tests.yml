@@ -20,6 +20,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Run dependency-free reporting foundation tests
         run: npm test --prefix server
+      - name: Test reviewer evidence presentation
+        run: npm test --prefix client
 
   parser-model-integration:
     runs-on: ubuntu-latest
@@ -35,3 +37,13 @@ jobs:
         run: npm ci --prefix server --ignore-scripts --no-audit --no-fund
       - name: Test real parsers and Mongoose validation without a database
         run: npm run test:integration --prefix server
+
+  client-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
+      - run: npm run build --prefix client

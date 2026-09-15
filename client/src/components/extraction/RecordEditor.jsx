@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { X, Save } from 'lucide-react';
+import RecordEvidence from './RecordEvidence';
 
 const RecordEditor = ({ record, onSave, onClose }) => {
   const [formData, setFormData] = useState({
-    value: record.value || '',
+    value: record.value ?? '',
     unit: record.unit || '',
   });
 
@@ -24,7 +25,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="bg-white dark:bg-dark-card rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-[#2d3139]">
+      <div className="bg-white dark:bg-dark-card rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto border border-slate-200 dark:border-[#2d3139]">
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-[#2d3139] bg-slate-50/50 dark:bg-[#1c1f26]/50">
           <h3 className="text-base font-bold text-gray-900 dark:text-white">Edit Extracted Record</h3>
           <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#ffffff0a] rounded transition-colors">
@@ -33,6 +34,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
         </div>
         
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <RecordEvidence record={record} currentValue={formData.value} />
           <div>
             <label className={labelClass}>Parameter</label>
             <input 

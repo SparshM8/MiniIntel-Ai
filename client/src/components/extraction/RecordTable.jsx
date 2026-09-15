@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import RecordEvidence from './RecordEvidence';
 import { Edit2, Check, X, CheckSquare, ShieldAlert, ShieldCheck } from 'lucide-react';
 
 const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) => {
@@ -70,7 +71,7 @@ const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) =>
               <th className={thClass}>Parameter</th>
               <th className={thClass}>Value / Unit</th>
               <th className={thClass}>Confidence</th>
-              <th className={thClass}>Source / Pg</th>
+              <th className={thClass}>Source evidence</th>
               <th className={thClass}>Status</th>
               <th className={`${thClass} text-right`}>Actions</th>
             </tr>
@@ -111,11 +112,7 @@ const RecordTable = ({ records, onEdit, onApprove, onReject, onBulkApprove }) =>
                     )}
                   </td>
                   <td className={tdClass}>
-                    <div className="flex items-center gap-1.5 text-[11px]">
-                      <span className="text-gray-600 dark:text-slate-300 truncate max-w-[120px]" title={record.mine || 'N/A'}>{record.mine || 'N/A'}</span>
-                      <span className="text-gray-400 dark:text-slate-600">|</span>
-                      <span className="text-gray-500 dark:text-slate-400 font-medium">Pg {record.pageNumber || '-'}</span>
-                    </div>
+                                        <RecordEvidence record={record} />
                   </td>
                   <td className={tdClass}>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1 shrink-0
