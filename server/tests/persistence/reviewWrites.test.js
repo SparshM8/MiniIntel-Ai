@@ -83,15 +83,37 @@ test('approve and reject persist actual status and review timestamps', async () 
   assert.equal(stored.editHistory.length, 0);
 });
 
-test('bulk approval affects only supplied existing IDs; missing IDs are silently unmatched', async () => {
+test('bulk approval reports matched and missing IDs while excluding unrelated records', async () => {
   const first = await createFact();
   const second = await createFact();
   const untouched = await createFact();
-  const response = await invoke(controller.bulkApprove, { body: { ids: [first.id, second.id, new mongoose.Types.ObjectId().toString()] } });
+  const response = await invoke(controller.bulkApprove, { body: { ids: [first.id, first.id.toUpperCase(), second.id, new mongoose.Types.ObjectId().toString()] } });
   assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, {
+    message: 'Bulk approval request completed', requestedCount: 3, duplicateCount: 1,
+    matchedCount: 2, modifiedCount: 2, unmatchedCount: 1
+  });
   assert.equal((await ExtractedRecord.findById(first.id)).status, 'approved');
   assert.equal((await ExtractedRecord.findById(second.id)).status, 'approved');
   assert.equal((await ExtractedRecord.findById(untouched.id)).status, 'pending');
+});
+
+test('invalid bulk payloads reject before changing a valid record', async () => {
+  const fact = await createFact();
+  for (const body of [null, {}, { ids: [fact.id, 'bad'] }, { ids: [fact.id, { $ne: null }] }, { ids: Array(1001).fill(fact.id) }]) {
+    assert.equal((await invoke(controller.bulkApprove, { body })).statusCode, 400);
+    const stored = await ExtractedRecord.findById(fact.id).lean();
+    assert.equal(stored.status, 'pending');
+    assert.equal(stored.reviewedAt, undefined);
+  }
+});
+
+test('all missing bulk IDs report zero matches without claiming approval', async () => {
+  const response = await invoke(controller.bulkApprove, { body: { ids: [new mongoose.Types.ObjectId().toString()] } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.matchedCount, 0);
+  assert.equal(response.body.modifiedCount, 0);
+  assert.equal(response.body.unmatchedCount, 1);
 });
 
 test('valid but nonexistent IDs return 404 for single-record mutations', async () => {

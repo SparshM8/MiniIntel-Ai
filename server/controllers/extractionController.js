@@ -1,5 +1,6 @@
 const extractionService = require('../services/extractionService');
 const ExtractedRecord = require('../models/ExtractedRecord');
+const { validateBulkReviewIds } = require('../utils/bulkReviewIds');
 
 exports.extract = async (req, res) => {
   try {
@@ -165,15 +166,11 @@ exports.rejectRecord = async (req, res) => {
 
 exports.bulkApprove = async (req, res) => {
   try {
-    const { ids } = req.body;
+        const validated = validateBulkReviewIds(req.body?.ids);
+    if (validated.error) return res.status(400).json({ error: validated.error });
+    const { ids, duplicateCount } = validated;
 
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({
-        error: 'Invalid or empty IDs array'
-      });
-    }
-
-    await ExtractedRecord.updateMany(
+    const result = await ExtractedRecord.updateMany(
       {
         _id: {
           $in: ids
@@ -188,7 +185,12 @@ exports.bulkApprove = async (req, res) => {
     );
 
     res.status(200).json({
-      message: 'Records approved successfully'
+      message: 'Bulk approval request completed',
+      requestedCount: ids.length,
+      duplicateCount,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+      unmatchedCount: ids.length - result.matchedCount
     });
 
   } catch (error) {
