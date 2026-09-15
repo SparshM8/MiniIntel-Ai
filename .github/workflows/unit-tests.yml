@@ -20,3 +20,18 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Run dependency-free reporting foundation tests
         run: npm test --prefix server
+
+  parser-model-integration:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --prefix server --ignore-scripts --no-audit --no-fund
+      - name: Test real parsers and Mongoose validation without a database
+        run: npm run test:integration --prefix server
