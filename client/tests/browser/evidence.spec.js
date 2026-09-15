@@ -137,6 +137,72 @@ test('pending save blocks duplicate submission and dismissal', async ({ page }) 
   expect(requests).toBe(1);
 });
 
+for (const [action, title] of [['approve', 'Approval'], ['reject', 'Rejection']]) {
+  test(`${action} failure shows an alert without inventing status`, async ({ page }) => {
+    await openReview(page, { [`/api/v1/extraction/records/record-a/${action}`]: route =>
+      route.fulfill({ status: 500, json: { error: 'Synthetic failure' } }) });
+    await page.getByTitle(action === 'approve' ? 'Approve' : 'Reject', { exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText(`${title} was not confirmed`);
+    await expect(page.getByText('pending', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reload records' })).toBeEnabled();
+  });
+}
+
+test('bulk failure preserves selection and pending request blocks conflicting actions', async ({ page }) => {
+  let release;
+  let attempts = 0;
+  const held = new Promise(resolve => { release = resolve; });
+  await openReview(page, { '/api/v1/extraction/records/bulk-approve': async route => {
+    attempts++;
+    expect(route.request().postDataJSON()).toEqual({ ids: ['record-a'] });
+    await held;
+    await route.fulfill({ status: 500, json: { error: 'Synthetic failure' } });
+  } });
+  const selection = page.getByRole('checkbox', { name: 'Select Coal Production' });
+  await selection.check();
+  const bulk = page.getByRole('button', { name: 'Approve Selected (1)', exact: true });
+  await bulk.click();
+  await expect(bulk).toBeDisabled();
+  await expect(page.getByTitle('Reject', { exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Extract Data' })).toBeDisabled();
+  release();
+  await expect(page.getByRole('alert')).toContainText('Bulk approval was not confirmed');
+  await expect(selection).toBeChecked();
+  await expect(bulk).toBeEnabled();
+  expect(attempts).toBe(1);
+});
+
+test('completed action with failed refresh warns and reload does not repeat mutation', async ({ page }) => {
+  let reads = 0;
+  let mutations = 0;
+  await openReview(page, {
+    '/api/v1/extraction/records/record-a/approve': route => { mutations++; return route.fulfill({ json: {} }); },
+    '/api/v1/extraction/doc-a': route => {
+      reads++;
+      return reads === 2 ? route.fulfill({ status: 500, json: {} })
+        : route.fulfill({ json: [{ ...fact, status: reads > 2 ? 'approved' : 'pending' }] });
+    }
+  });
+  await page.getByTitle('Approve', { exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('status refresh failed');
+  await page.getByRole('button', { name: 'Reload records' }).click();
+  await expect(page.getByText('approved', { exact: true })).toBeVisible();
+  expect(mutations).toBe(1);
+});
+
+test('bulk success uses returned records and clears selection', async ({ page }) => {
+  let completed = false;
+  await openReview(page, {
+    '/api/v1/extraction/records/bulk-approve': route => { completed = true; return route.fulfill({ json: {} }); },
+    '/api/v1/extraction/doc-a': route => route.fulfill({ json: [{ ...fact, status: completed ? 'approved' : 'pending' }] })
+  });
+  await page.getByRole('checkbox', { name: 'Select Coal Production' }).check();
+  await page.getByRole('button', { name: 'Approve Selected (1)', exact: true }).click();
+  await expect(page.getByText('approved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve Selected (0)', exact: true })).toBeDisabled();
+});
+
 test('failed document switch does not leave previous evidence visible', async ({ page }) => {
   await openReview(page, { '/api/v1/extraction/doc-b': route => route.fulfill({ status: 500, json: { error: 'Synthetic failure' } }) });
   await expect(page.locator('summary')).toHaveCount(1);
