@@ -11,6 +11,8 @@ server/uploads/*
 
 # Build output
 client/dist/
+client/test-results/
+client/playwright-report/
 
 # IDE
 .vscode/
