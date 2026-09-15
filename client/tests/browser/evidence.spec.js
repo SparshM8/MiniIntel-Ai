@@ -203,6 +203,43 @@ test('bulk success uses returned records and clears selection', async ({ page })
   await expect(page.getByRole('button', { name: 'Approve Selected (0)', exact: true })).toBeDisabled();
 });
 
+test('save deadline unlocks draft and read-only server check does not resubmit', async ({ page }) => {
+  let writes = 0;
+  let started;
+  const requested = new Promise(resolve => { started = resolve; });
+  await openReview(page, { '/api/v1/extraction/records/record-a': () => { writes++; started(); } });
+  await page.clock.install();
+  await page.getByTitle('Edit', { exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Value', { exact: true }).fill('10');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await requested;
+  await page.clock.fastForward(30001);
+  await expect(dialog.getByRole('alert')).toContainText('server may still complete');
+  await expect(dialog.getByLabel('Value', { exact: true })).toHaveValue('10');
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Check current server record' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Current server snapshot: 0 tonnes');
+  await expect(dialog.getByLabel('Value', { exact: true })).toHaveValue('10');
+  expect(writes).toBe(1);
+});
+
+test('approval deadline restores controls and offers read-only recovery', async ({ page }) => {
+  let writes = 0;
+  let started;
+  const requested = new Promise(resolve => { started = resolve; });
+  await openReview(page, { '/api/v1/extraction/records/record-a/approve': () => { writes++; started(); } });
+  await page.clock.install();
+  await page.getByTitle('Approve', { exact: true }).click();
+  await requested;
+  await page.clock.fastForward(30001);
+  await expect(page.getByRole('alert')).toContainText('server may still complete');
+  await expect(page.getByRole('combobox')).toBeEnabled();
+  await page.getByRole('button', { name: 'Reload records' }).click();
+  await expect(page.getByText('pending', { exact: true })).toBeVisible();
+  expect(writes).toBe(1);
+});
+
 test('failed document switch does not leave previous evidence visible', async ({ page }) => {
   await openReview(page, { '/api/v1/extraction/doc-b': route => route.fulfill({ status: 500, json: { error: 'Synthetic failure' } }) });
   await expect(page.locator('summary')).toHaveCount(1);

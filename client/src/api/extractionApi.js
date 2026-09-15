@@ -1,4 +1,5 @@
 import apiClient from './client';
+import { reviewRequest } from '../utils/reviewRequest';
 
 /**
  * Data Extraction REST API Module
@@ -23,7 +24,7 @@ export const extractionApi = {
    * @param {string} documentId
    */
   getExtraction: async (documentId) => {
-    const response = await apiClient.get(`/extraction/${documentId}`);
+    const response = await reviewRequest(config => apiClient.get(`/extraction/${documentId}`, config));
     return response.data;
   },
 
@@ -33,7 +34,7 @@ export const extractionApi = {
    * @param {object} [params]
    */
   getRecords: async (documentId, params = {}) => {
-    const response = await apiClient.get(`/extraction/${documentId}/records`, { params });
+    const response = await reviewRequest(config => apiClient.get(`/extraction/${documentId}/records`, { ...config, params }));
     return response.data;
   },
 
@@ -42,7 +43,7 @@ export const extractionApi = {
    * @param {string} documentId
    */
   getExtractedRecords: async (documentId) => {
-    const response = await apiClient.get(`/extraction/${documentId}`);
+    const response = await reviewRequest(config => apiClient.get(`/extraction/${documentId}`, config));
     // Return array of records if present in .data or .data.records
     const data = response.data?.data || response.data;
     if (Array.isArray(data)) return data;
@@ -57,11 +58,11 @@ export const extractionApi = {
   updateRecord: async (arg1, arg2, arg3) => {
     if (arg3 !== undefined) {
       // (documentId, recordId, data)
-      const response = await apiClient.put(`/extraction/${arg1}/records/${arg2}`, arg3);
+      const response = await reviewRequest(config => apiClient.put(`/extraction/${arg1}/records/${arg2}`, arg3, config));
       return response.data;
     }
     // (recordId, data)
-    const response = await apiClient.put(`/extraction/records/${arg1}`, arg2);
+    const response = await reviewRequest(config => apiClient.put(`/extraction/records/${arg1}`, arg2, config));
     return response.data;
   },
 
@@ -88,7 +89,7 @@ export const extractionApi = {
    * @param {string} recordId
    */
   approveRecord: async (recordId) => {
-    const response = await apiClient.post(`/extraction/records/${recordId}/approve`);
+    const response = await reviewRequest(config => apiClient.post(`/extraction/records/${recordId}/approve`, undefined, config));
     return response.data;
   },
 
@@ -97,7 +98,7 @@ export const extractionApi = {
    * @param {string} recordId
    */
   rejectRecord: async (recordId) => {
-    const response = await apiClient.post(`/extraction/records/${recordId}/reject`);
+    const response = await reviewRequest(config => apiClient.post(`/extraction/records/${recordId}/reject`, undefined, config));
     return response.data;
   },
 
@@ -106,7 +107,7 @@ export const extractionApi = {
    * @param {string[]} ids
    */
   bulkApprove: async (ids) => {
-    const response = await apiClient.post('/extraction/records/bulk-approve', { ids });
+    const response = await reviewRequest(config => apiClient.post('/extraction/records/bulk-approve', { ids }, config));
     return response.data;
   },
 };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { X, Save } from 'lucide-react';
 import RecordEvidence from './RecordEvidence';
+import { extractionApi } from '../../api';
 
 const RecordEditor = ({ record, onSave, onClose }) => {
   const [formData, setFormData] = useState({
@@ -12,6 +13,28 @@ const RecordEditor = ({ record, onSave, onClose }) => {
   const savingRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [serverSnapshot, setServerSnapshot] = useState(null);
+
+  const checkCurrentRecord = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setChecking(true);
+    setServerSnapshot(null);
+    try {
+      const documentId = record.documentId?._id || record.documentId;
+      if (!documentId) throw new Error('Document reference unavailable');
+      const records = await extractionApi.getExtractedRecords(documentId);
+      const current = Array.isArray(records) && records.find(item => (item.id || item._id) === (record.id || record._id));
+      if (!current) throw new Error('Record unavailable in current response');
+      setServerSnapshot({ value: current.value, unit: current.unit, status: current.status });
+    } catch (error) {
+      setSaveError(`Could not check current record. Your draft is retained. ${error.message}`);
+    } finally {
+      savingRef.current = false;
+      setChecking(false);
+    }
+  };
   const titleId = useId();
   const valueId = useId();
   const unitId = useId();
@@ -44,6 +67,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
     savingRef.current = true;
     setSaving(true);
     setSaveError('');
+    setServerSnapshot(null);
     try {
       await onSave(formData);
     } catch (error) {
@@ -59,7 +83,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
   const labelClass = "block text-xs font-semibold text-gray-500 dark:text-[#64748b] uppercase tracking-wider mb-1.5";
 
   return (
-        <dialog ref={dialogRef} aria-labelledby={titleId} aria-busy={saving}
+        <dialog ref={dialogRef} aria-labelledby={titleId} aria-busy={saving || checking}
       onCancel={(event) => { event.preventDefault(); handleClose(); }}
       onKeyDown={(event) => {
         if (event.key !== 'Tab') return;
@@ -76,14 +100,23 @@ const RecordEditor = ({ record, onSave, onClose }) => {
       <div>
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-[#2d3139] bg-slate-50/50 dark:bg-[#1c1f26]/50">
           <h3 id={titleId} className="text-base font-bold text-gray-900 dark:text-white">Edit Extracted Record</h3>
-          <button type="button" aria-label="Close record editor" disabled={saving} onClick={handleClose} className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#ffffff0a] rounded transition-colors">
+          <button type="button" aria-label="Close record editor" disabled={saving || checking} onClick={handleClose} className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#ffffff0a] rounded transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
         
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <RecordEvidence record={record} currentValue={formData.value} />
-          {saveError && <p role="alert" className="text-sm text-red-700 dark:text-red-400">{saveError}</p>}
+          {saveError && <div className="space-y-2">
+            <p role="alert" className="text-sm text-red-700 dark:text-red-400">{saveError}</p>
+            <button type="button" disabled={saving || checking} onClick={checkCurrentRecord} className="underline text-sm">
+              {checking ? 'Checking current record...' : 'Check current server record'}
+            </button>
+          </div>}
+          {serverSnapshot && <p role="status" className="text-sm">
+            Current server snapshot: {String(serverSnapshot.value ?? 'unavailable')} {String(serverSnapshot.unit ?? '')}; status: {String(serverSnapshot.status ?? 'unavailable')}.
+            Your draft is unchanged. An earlier request may still finish after this check.
+          </p>}
           <div>
             <label className={labelClass}>Parameter</label>
             <input 
@@ -99,7 +132,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
             <input 
               type="text" 
               id={valueId}
-              disabled={saving}
+              disabled={saving || checking}
               name="value"
                             value={formData.value}
               onChange={handleChange}
@@ -111,7 +144,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
             <input 
               type="text" 
               id={unitId}
-              disabled={saving}
+              disabled={saving || checking}
               name="unit"
               value={formData.unit} 
               onChange={handleChange}
@@ -123,7 +156,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
           <div className="flex justify-end gap-3 pt-4 mt-2 border-t border-slate-100 dark:border-[#2d3139]">
             <button 
               type="button" 
-              disabled={saving}
+              disabled={saving || checking}
               onClick={handleClose}
               className="px-4 py-2 text-sm font-semibold text-gray-700 dark:text-[#94a3b8] hover:text-gray-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#ffffff0a] rounded-lg transition-colors"
             >
@@ -131,7 +164,7 @@ const RecordEditor = ({ record, onSave, onClose }) => {
             </button>
             <button 
               type="submit"
-              disabled={saving}
+              disabled={saving || checking}
               className="px-4 py-2 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-sm shadow-amber-500/20"
             >
               <Save className="w-4 h-4" />
