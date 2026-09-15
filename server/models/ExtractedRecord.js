@@ -18,6 +18,15 @@ const FactMetadataSchema = new mongoose.Schema({
   reportingPeriod: ReportingPeriodSchema
 }, { _id: false });
 
+const CellReferenceSchema = new mongoose.Schema({
+  kind: { type: String, enum: ['spreadsheet_sheet', 'csv_sheet'], required: true },
+  status: { type: String, enum: ['unverified', 'value_matched'], required: true },
+  sheetName: String,
+  cellAddress: String,
+  matchedValue: String,
+  reason: String
+}, { _id: false });
+
 const ExtractedRecordSchema = new mongoose.Schema({
   documentId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -41,6 +50,7 @@ const ExtractedRecordSchema = new mongoose.Schema({
     type: String
   },
   factMetadata: { type: FactMetadataSchema, default: undefined },
+  cellReference: { type: CellReferenceSchema, default: undefined },
   publicationStatus: {
     type: String,
     enum: ['unknown', 'provisional', 'revised', 'final']
