@@ -9,6 +9,11 @@ test('complete counts do not confuse modifications with status transitions', () 
   assert.equal(result.complete, true);
   assert.match(result.text, /0 records modified/);
 });
+test('v1 response envelope exposes authoritative counts', () => {
+  assert.equal(bulkReviewOutcome({ success: true, data: {
+    requestedCount: 1, matchedCount: 1, modifiedCount: 1, unmatchedCount: 0
+  } }).complete, true);
+});
 test('partial counts cannot signal complete success', () => {
   const result = bulkReviewOutcome({ requestedCount: 2, matchedCount: 1, modifiedCount: 1, unmatchedCount: 1 });
   assert.equal(result.complete, false);
