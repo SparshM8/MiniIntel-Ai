@@ -18,8 +18,11 @@ try {
   const files = discover(resolve(directory), option === '--recursive');
   if (files.length === 0) throw new Error(`No .test.js files found in ${directory}`);
   console.log(`Running ${files.length} test file(s) with ${process.version}`);
-  // Explicit paths and no shell: independent of glob/directory runner semantics.
-  const child = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', shell: false });
+    // Explicit paths, no shell, and one worker keep discovery cross-platform and
+  // prevent integration files from racing over process-global resources/caches.
+  const child = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], {
+    stdio: 'inherit', shell: false
+  });
   if (child.error) throw child.error;
   process.exitCode = child.status ?? 1;
 } catch (error) {

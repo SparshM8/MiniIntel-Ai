@@ -85,8 +85,8 @@ const CommandCenter = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-500 dark:text-slate-400">{stat.label}</p>
-                <p className="text-2xl font-bold text-neutral-900 dark:text-white">{stat.value}</p>
-            </div>
+                                <p className="text-2xl font-bold text-neutral-900 dark:text-white">{stat.value}</p>
+              </div>
             </section>
           ))}
         </div>
@@ -158,7 +158,7 @@ const CommandCenter = () => {
                     components={{
                       table: ({node, ...props}) => (
                         <div className="overflow-x-auto my-2">
-                          <table className="min-w-full divide-y divide-neutral-300 dark:divide-gray-200 dark:divide-neutral-700" {...props} />
+                          <table className="min-w-full divide-y divide-neutral-300 dark:divide-neutral-700" {...props} />
                         </div>
                       )
                     }}
