@@ -21,6 +21,7 @@ import AdminUsers from './pages/AdminUsers';
 import SystemHealth from './pages/SystemHealth';
 import IntelligenceDashboard from './pages/IntelligenceDashboard';
 import AdminPendingReviews from './pages/AdminPendingReviews';
+import ReconciliationReview from './pages/ReconciliationReview';
 import Settings from './pages/Settings';
 import HelpSupport from './pages/HelpSupport';
 
@@ -66,6 +67,7 @@ function App() {
                       <Route path="admin/users" element={<AdminUsers />} />
                       <Route path="admin/system-health" element={<SystemHealth />} />
                       <Route path="admin/pending-reviews" element={<AdminPendingReviews />} />
+                      <Route path="admin/reconciliations" element={<ReconciliationReview />} />
                     </Route>
                   </Route>
                 </Route>
