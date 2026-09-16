@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Brain, ShieldCheck, Database, MessageSquare, 
   BarChart2, Hash, FileOutput, Monitor, ScrollText, ChevronLeft, 
   ChevronRight, LogOut, Users, Activity, Sparkles, FileCheck, Settings,
-  HelpCircle
+    HelpCircle, GitCompareArrows
 } from 'lucide-react';
 import { AuthContext } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -36,7 +36,8 @@ const navGroups = [
       { to: '/reports', icon: FileOutput, label: 'Reports' },
       { to: '/audit', icon: ScrollText, label: 'Audit Trail' },
       { to: '/admin/users', icon: Users, label: 'User Management', adminOnly: true },
-      { to: '/admin/pending-reviews', icon: FileCheck, label: 'Pending Reviews', adminOnly: true }
+      { to: '/admin/pending-reviews', icon: FileCheck, label: 'Pending Reviews', adminOnly: true },
+      { to: '/admin/reconciliations', icon: GitCompareArrows, label: 'Reconciliations', adminOnly: true }
     ]
   }
 ];

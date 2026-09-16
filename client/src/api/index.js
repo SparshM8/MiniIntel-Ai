@@ -11,6 +11,7 @@ import intelligenceApi from './intelligenceApi';
 import topicsApi from './topicsApi';
 import reportsApi from './reportsApi';
 import reviewsApi from './reviewsApi';
+import reconciliationApi from './reconciliationApi';
 import auditApi from './auditApi';
 import dashboardApi from './dashboardApi';
 import commandCentreApi from './commandCentreApi';
@@ -34,6 +35,7 @@ export {
   topicsApi,
   reportsApi,
   reviewsApi,
+  reconciliationApi,
   auditApi,
   dashboardApi,
   commandCentreApi,
@@ -58,6 +60,7 @@ export default {
   topics: topicsApi,
   reports: reportsApi,
   reviews: reviewsApi,
+  reconciliation: reconciliationApi,
   audit: auditApi,
   dashboard: dashboardApi,
   commandCentre: commandCentreApi,
