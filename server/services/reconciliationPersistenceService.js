@@ -24,6 +24,21 @@ async function authorizeDocument(documentId, actor, DocumentModel = Document) {
   if (actor.role !== 'admin' && document.userId?.toString() !== id) throw serviceError('DOCUMENT_FORBIDDEN', 403, 'Document access is forbidden.');
   return document;
 }
+async function listReconciliations({ documentId, actor }, dependencies = {}) {
+  const DocumentModel = dependencies.DocumentModel || Document;
+  const RecordModel = dependencies.RecordModel || ReconciliationRecord;
+  await authorizeDocument(documentId, actor, DocumentModel);
+  return RecordModel.find({ documentId }).sort({ createdAt: -1 });
+}
+async function getReconciliation({ recordId, actor }, dependencies = {}) {
+  const RecordModel = dependencies.RecordModel || ReconciliationRecord;
+  if (!actorId(actor)) throw serviceError('AUTH_REQUIRED', 401, 'Authenticated actor is required.');
+  if (!mongoose.isValidObjectId(recordId)) throw serviceError('INVALID_RECORD_ID', 400, 'Record ID is invalid.');
+  const record = await RecordModel.findById(recordId);
+  if (!record) throw serviceError('RECORD_NOT_FOUND', 404, 'Reconciliation record was not found.');
+  await authorizeDocument(record.documentId, actor, dependencies.DocumentModel || Document);
+  return record;
+}
 async function createReconciliation({ documentId, reconciliationCase, actor }, dependencies = {}) {
   const DocumentModel = dependencies.DocumentModel || Document;
   const RecordModel = dependencies.RecordModel || ReconciliationRecord;
@@ -84,4 +99,13 @@ async function appendDecision({ recordId, requestId, decision, reason, expectedV
   return { record: updated, created: true };
 }
 
-module.exports = { REVIEW_STATES, stable, payloadHash, authorizeDocument, createReconciliation, appendDecision };
+module.exports = {
+  REVIEW_STATES,
+  stable,
+  payloadHash,
+  authorizeDocument,
+  listReconciliations,
+  getReconciliation,
+  createReconciliation,
+  appendDecision
+};
