@@ -72,7 +72,7 @@ const authorize = (...allowedRoles) => {
 // Aliases for seamless drop-in compatibility with legacy routes
 const protect = authenticate;
 const admin = authorize('admin');
-const reviewer = authorize('admin', 'reviewer', 'official');
+const reviewer = authorize('admin', 'reviewer');
 
 module.exports = {
   authenticate,

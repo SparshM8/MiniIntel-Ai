@@ -127,11 +127,11 @@ router.get('/', authenticate, async (req, res, next) => {
       query.uploadedAt = {};
       if (dateFrom) query.uploadedAt.$gte = new Date(dateFrom);
       if (dateTo) query.uploadedAt.$lte = new Date(dateTo);
-    }
+        }
 
-        if (req.user.role !== 'admin') {
+    if (req.user.role !== 'admin') {
       query.$or = [{ userId: req.user._id }];
-      if (['reviewer', 'official'].includes(req.user.role)) query.$or.push({ reviewerIds: req.user._id });
+      if (req.user.role === 'reviewer') query.$or.push({ reviewerIds: req.user._id });
     }
 
     const pageNum = Math.max(1, parseInt(page) || 1);
@@ -155,8 +155,8 @@ router.get('/', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   PUT /api/v1/documents/:id/reviewers
- * @desc    Replace document reviewer/official assignments
+  * @route   PUT /api/v1/documents/:id/reviewers
+ * @desc    Replace document reviewer assignments
  * @access  Admin
  */
 router.put('/:id/reviewers', authenticate, authorize('admin'), async (req, res, next) => {
@@ -166,14 +166,14 @@ router.put('/:id/reviewers', authenticate, authorize('admin'), async (req, res, 
     if (!Array.isArray(reviewerIds) || reviewerIds.length > 100 || reviewerIds.some(id => !isValidId(id))) {
       return sendError(res, 'reviewerIds must be an array of at most 100 valid user IDs', 'INVALID_REVIEWERS', 400);
     }
-    const uniqueIds = [...new Set(reviewerIds.map(String))];
-    const reviewers = await User.find({ _id: { $in: uniqueIds }, role: { $in: ['reviewer', 'official'] }, status: 'active' }).select('_id');
+        const uniqueIds = [...new Set(reviewerIds.map(String))];
+    const reviewers = await User.find({ _id: { $in: uniqueIds }, role: 'reviewer', status: 'active' }).select('_id');
     if (reviewers.length !== uniqueIds.length) {
-      return sendError(res, 'Every assignment must identify an active reviewer or official', 'INVALID_REVIEWERS', 400);
+      return sendError(res, 'Every assignment must identify an active reviewer', 'INVALID_REVIEWERS', 400);
     }
     const document = await Document.findById(req.params.id);
-    if (!document) return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
-        document.reviewerIds = uniqueIds;
+        if (!document) return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
+    document.reviewerIds = uniqueIds;
     await document.save();
     auditService.logAudit({ user: req.user._id, action: 'ASSIGN_DOCUMENT_REVIEWERS', resource: 'Document',
       resourceId: document._id, details: { reviewerIds: uniqueIds } });
@@ -195,11 +195,11 @@ router.get('/:id', authenticate, async (req, res, next) => {
     const document = await Document.findById(req.params.id);
     if (!document) {
       return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
-    }
+        }
 
-        const assigned = document.reviewerIds?.some(id => id.toString() === req.user._id.toString());
+    const assigned = document.reviewerIds?.some(id => id.toString() === req.user._id.toString());
     if (req.user.role !== 'admin' && document.userId?.toString() !== req.user._id.toString()
-      && !(['reviewer', 'official'].includes(req.user.role) && assigned)) {
+      && !(req.user.role === 'reviewer' && assigned)) {
       return sendError(res, 'Access denied: not authorized to view this document', 'FORBIDDEN', 403);
     }
 
@@ -425,13 +425,13 @@ router.get('/:id/status', authenticate, async (req, res, next) => {
   try {
     if (!isValidId(req.params.id)) {
       return sendError(res, 'Invalid document ID format', 'INVALID_ID', 400);
-    }
+        }
 
-        const document = await Document.findById(req.params.id).select('userId reviewerIds');
+    const document = await Document.findById(req.params.id).select('userId reviewerIds');
     if (!document) return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
     const assigned = document.reviewerIds?.some(id => id.toString() === req.user._id.toString());
     if (req.user.role !== 'admin' && document.userId?.toString() !== req.user._id.toString()
-      && !(['reviewer', 'official'].includes(req.user.role) && assigned)) {
+      && !(req.user.role === 'reviewer' && assigned)) {
       return sendError(res, 'Access denied: not authorized to view processing status', 'FORBIDDEN', 403);
     }
     const job = await ProcessingJob.findOne({ documentId: req.params.id });

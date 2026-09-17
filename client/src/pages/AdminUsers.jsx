@@ -82,7 +82,6 @@ const AdminUsers = () => {
                       >
                                                 <option value="user">User</option>
                         <option value="reviewer">Reviewer</option>
-                        <option value="official">Official</option>
                         {user.role === 'admin' && <option value="admin">Admin</option>}
                       </select>
                     </td>

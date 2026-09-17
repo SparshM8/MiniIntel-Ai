@@ -74,8 +74,8 @@ export const documentApi = {
     return response.data;
   },
 
-    /**
-   * Replace reviewer/official assignments (admin only)
+      /**
+   * Replace reviewer assignments (admin only)
    * @param {string} id
    * @param {string[]} reviewerIds
    */

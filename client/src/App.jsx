@@ -60,8 +60,8 @@ function App() {
                     <Route path="topics" element={<TopicsExplorer />} />
                     <Route path="audit" element={<AuditTrail />} />
                     <Route path="settings" element={<Settings />} />
-                                        <Route path="help" element={<HelpSupport />} />
-                    <Route path="reconciliations" element={<ProtectedRoute allowedRoles={['reviewer', 'official', 'admin']}><ReconciliationReview /></ProtectedRoute>} />
+                    <Route path="help" element={<HelpSupport />} />
+                    <Route path="reconciliations" element={<ProtectedRoute allowedRoles={['reviewer', 'admin']}><ReconciliationReview /></ProtectedRoute>} />
                     
                     {/* Admin Specific Screens */}
                     <Route element={<ProtectedRoute adminOnly={true} />}>

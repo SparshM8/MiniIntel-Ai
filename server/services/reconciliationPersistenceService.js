@@ -23,7 +23,7 @@ async function authorizeDocument(documentId, actor, DocumentModel = Document, ac
   if (!document) throw serviceError('DOCUMENT_NOT_FOUND', 404, 'Document was not found.');
   const ownsDocument = document.userId?.toString() === id;
   const assigned = document.reviewerIds?.some(reviewerId => reviewerId.toString() === id) || false;
-  const canUseAssignment = access !== 'manage' && ['reviewer', 'official'].includes(actor.role);
+  const canUseAssignment = access !== 'manage' && actor.role === 'reviewer';
   if (actor.role !== 'admin' && !ownsDocument && !(canUseAssignment && assigned)) {
     throw serviceError('DOCUMENT_FORBIDDEN', 403, 'Document access is forbidden.');
   }
@@ -72,7 +72,7 @@ async function appendDecision({ recordId, requestId, decision, reason, expectedV
   const RecordModel = dependencies.RecordModel || ReconciliationRecord;
   const id = actorId(actor);
   if (!id) throw serviceError('AUTH_REQUIRED', 401, 'Authenticated actor is required.');
-  if (!['reviewer', 'official', 'admin'].includes(actor.role)) throw serviceError('FORBIDDEN_ROLE', 403, 'Reviewer or official role is required.');
+  if (!['reviewer', 'admin'].includes(actor.role)) throw serviceError('FORBIDDEN_ROLE', 403, 'Reviewer role is required.');
   if (!mongoose.isValidObjectId(recordId)) throw serviceError('INVALID_RECORD_ID', 400, 'Record ID is invalid.');
   if (!requestId?.trim() || !REVIEW_STATES[decision] || !reason?.trim() || !Number.isInteger(expectedVersion) || expectedVersion < 0) {
     throw serviceError('INVALID_DECISION', 400, 'Decision, reason, requestId and expectedVersion are required.');

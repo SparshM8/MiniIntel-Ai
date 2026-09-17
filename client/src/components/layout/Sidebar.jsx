@@ -1,8 +1,8 @@
 import React, { useContext } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { 
-  LayoutDashboard, Brain, ShieldCheck, Database, MessageSquare, 
-    BarChart2, Hash, FileOutput, Monitor, ScrollText, ChevronLeft,
+    LayoutDashboard, Brain, ShieldCheck, Database, MessageSquare,
+  BarChart2, Hash, FileOutput, Monitor, ScrollText, ChevronLeft,
   ChevronRight, LogOut, Users, Activity, Sparkles, FileCheck, Settings,
   HelpCircle, GitCompareArrows
 } from 'lucide-react';
@@ -37,7 +37,7 @@ const navGroups = [
       { to: '/audit', icon: ScrollText, label: 'Audit Trail' },
       { to: '/admin/users', icon: Users, label: 'User Management', adminOnly: true },
       { to: '/admin/pending-reviews', icon: FileCheck, label: 'Pending Reviews', adminOnly: true },
-      { to: '/reconciliations', icon: GitCompareArrows, label: 'Reconciliations', roles: ['reviewer', 'official', 'admin'] }
+      { to: '/reconciliations', icon: GitCompareArrows, label: 'Reconciliations', roles: ['reviewer', 'admin'] }
     ]
   }
 ];

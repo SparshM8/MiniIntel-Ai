@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
 const scenarios = require('../fixtures/reconciliationCases');
+const User = require('../../models/User');
 const { stable, payloadHash, authorizeDocument, createReconciliation, appendDecision } = require('../../services/reconciliationPersistenceService');
 
 const objectId = () => new mongoose.Types.ObjectId();
@@ -24,19 +25,30 @@ test('document authorization rejects missing actors and malformed IDs before loo
   await expectCode(authorizeDocument('bad', { _id: objectId(), role: 'admin' }, DocumentModel), 'INVALID_DOCUMENT_ID', 400);
 });
 
-test('only assigned reviewer or official receives delegated document access', async () => {
+test('only an assigned reviewer receives delegated document access', async () => {
   const ownerId = objectId();
   const assignedId = objectId();
   const documentId = objectId();
   const DocumentModel = { findById: () => ({ select: () => ({ lean: async () => ({
     _id: documentId, userId: ownerId, reviewerIds: [assignedId]
   }) }) }) };
-  for (const role of ['reviewer', 'official']) {
-    assert.equal((await authorizeDocument(documentId, { _id: assignedId, role }, DocumentModel))._id, documentId);
-    await expectCode(authorizeDocument(documentId, { _id: assignedId, role }, DocumentModel, 'manage'), 'DOCUMENT_FORBIDDEN', 403);
-  }
+  assert.equal((await authorizeDocument(documentId, { _id: assignedId, role: 'reviewer' }, DocumentModel))._id, documentId);
+  await expectCode(authorizeDocument(documentId, { _id: assignedId, role: 'reviewer' }, DocumentModel, 'manage'), 'DOCUMENT_FORBIDDEN', 403);
   await expectCode(authorizeDocument(documentId, { _id: assignedId, role: 'user' }, DocumentModel), 'DOCUMENT_FORBIDDEN', 403);
+  await expectCode(authorizeDocument(documentId, { _id: assignedId, role: 'official' }, DocumentModel), 'DOCUMENT_FORBIDDEN', 403);
   await expectCode(authorizeDocument(documentId, { _id: objectId(), role: 'reviewer' }, DocumentModel), 'DOCUMENT_FORBIDDEN', 403);
+});
+
+test('user model rejects the removed official role', () => {
+  const error = new User({ username: 'removed-role', password: 'unused', role: 'official' }).validateSync();
+  assert.equal(error.errors.role.kind, 'enum');
+});
+
+test('removed official role cannot submit decisions before database access', async () => {
+  const RecordModel = { findById() { throw new Error('must not query'); } };
+  await expectCode(appendDecision({ recordId: objectId(), requestId: 'removed-role-decision',
+    decision: 'accept', reason: 'Not authorized', expectedVersion: 0,
+    actor: { _id: objectId(), role: 'official' } }, { RecordModel }), 'FORBIDDEN_ROLE', 403);
 });
 
 test('create rejects invalid evidence contracts before persistence', async () => {

@@ -91,3 +91,43 @@ test('review decisions enforce role, idempotency, and optimistic versions', asyn
   const stale = { requestId: randomUUID(), decision: 'reject', reason: 'Stale review', expectedVersion: 0 };
   assert.equal((await request(`/${recordId}/decisions`, 'POST', stale, reviewer)).status, 409);
 });
+
+test('assigned reviewer can read but not create, and revoked access denies reads and decisions', async () => {
+  const assignedDocument = await Document.create({ filename: 'assigned.csv', originalName: 'assigned.csv',
+    mimeType: 'text/csv', fileSize: 1, fileType: 'csv', userId: owner._id, reviewerIds: [reviewer._id] });
+  const created = await request(`/documents/${assignedDocument.id}`, 'POST', scenarios[0]);
+  assert.equal(created.status, 201);
+  const id = created.body.data._id;
+  assert.equal((await request(`/documents/${assignedDocument.id}`, 'GET', undefined, reviewer)).status, 200);
+  assert.equal((await request(`/${id}`, 'GET', undefined, reviewer)).status, 200);
+  assert.equal((await request(`/documents/${assignedDocument.id}`, 'POST', scenarios[0], reviewer)).status, 403);
+
+  await Document.updateOne({ _id: assignedDocument._id }, { $set: { reviewerIds: [] } });
+  assert.equal((await request(`/documents/${assignedDocument.id}`, 'GET', undefined, reviewer)).status, 403);
+  assert.equal((await request(`/${id}`, 'GET', undefined, reviewer)).status, 403);
+  assert.equal((await request(`/${id}/decisions`, 'POST', { requestId: randomUUID(), decision: 'accept',
+    reason: 'Assignment revoked', expectedVersion: 0 }, reviewer)).status, 403);
+  const stored = await ReconciliationRecord.findById(id).lean();
+  assert.equal(stored.reviewVersion, 0);
+  assert.equal(stored.decisions.length, 0);
+});
+
+test('persisted legacy official role gains no delegated read or decision access', async () => {
+  // Raw insertion reproduces an account created before the schema removed this role.
+  const legacyId = new mongoose.Types.ObjectId();
+  await User.collection.insertOne({ _id: legacyId, username: 'legacy-official', password: 'unused',
+    role: 'official', status: 'active' });
+  const legacy = { id: legacyId.toString() };
+  const assignedDocument = await Document.create({ filename: 'legacy.csv', originalName: 'legacy.csv',
+    mimeType: 'text/csv', fileSize: 1, fileType: 'csv', userId: owner._id, reviewerIds: [legacyId] });
+  const created = await request(`/documents/${assignedDocument.id}`, 'POST', scenarios[0]);
+  assert.equal(created.status, 201);
+  const id = created.body.data._id;
+  assert.equal((await request(`/documents/${assignedDocument.id}`, 'GET', undefined, legacy)).status, 403);
+  assert.equal((await request(`/${id}`, 'GET', undefined, legacy)).status, 403);
+  assert.equal((await request(`/${id}/decisions`, 'POST', { requestId: randomUUID(), decision: 'accept',
+    reason: 'Legacy role must not approve', expectedVersion: 0 }, legacy)).status, 403);
+  const stored = await ReconciliationRecord.findById(id).lean();
+  assert.equal(stored.reviewVersion, 0);
+  assert.equal(stored.decisions.length, 0);
+});
