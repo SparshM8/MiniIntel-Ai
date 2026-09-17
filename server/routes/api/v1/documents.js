@@ -163,10 +163,11 @@ router.put('/:id/reviewers', authenticate, authorize('admin'), async (req, res, 
   try {
     if (!isValidId(req.params.id)) return sendError(res, 'Invalid document ID format', 'INVALID_ID', 400);
     const reviewerIds = req.body?.reviewerIds;
-    if (!Array.isArray(reviewerIds) || reviewerIds.length > 100 || reviewerIds.some(id => !isValidId(id))) {
+    if (!Array.isArray(reviewerIds) || reviewerIds.length > 100
+      || reviewerIds.some(id => typeof id !== 'string' || !/^[a-f\d]{24}$/i.test(id))) {
       return sendError(res, 'reviewerIds must be an array of at most 100 valid user IDs', 'INVALID_REVIEWERS', 400);
     }
-        const uniqueIds = [...new Set(reviewerIds.map(String))];
+    const uniqueIds = [...new Set(reviewerIds.map(id => id.toLowerCase()))];
     const reviewers = await User.find({ _id: { $in: uniqueIds }, role: 'reviewer', status: 'active' }).select('_id');
     if (reviewers.length !== uniqueIds.length) {
       return sendError(res, 'Every assignment must identify an active reviewer', 'INVALID_REVIEWERS', 400);

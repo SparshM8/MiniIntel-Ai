@@ -8,8 +8,8 @@ export const userApi = {
   /**
    * Get all registered users (Admin only)
    */
-  getUsers: async () => {
-    const response = await apiClient.get('/admin/users');
+  getUsers: async (config = {}) => {
+    const response = await apiClient.get('/admin/users', config);
     return response.data;
   },
 

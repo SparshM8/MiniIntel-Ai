@@ -32,8 +32,8 @@ export const documentApi = {
    * Get document by ID with parsed pages and chunks
    * @param {string} id
    */
-  getDocumentById: async (id) => {
-    const response = await apiClient.get(`/documents/${id}`);
+  getDocumentById: async (id, config = {}) => {
+    const response = await apiClient.get(`/documents/${id}`, config);
     return response.data;
   },
 
@@ -74,13 +74,13 @@ export const documentApi = {
     return response.data;
   },
 
-      /**
+  /**
    * Replace reviewer assignments (admin only)
    * @param {string} id
    * @param {string[]} reviewerIds
    */
-  assignReviewers: async (id, reviewerIds) => {
-    const response = await apiClient.put(`/documents/${id}/reviewers`, { reviewerIds });
+  assignReviewers: async (id, reviewerIds, config = {}) => {
+    const response = await apiClient.put(`/documents/${id}/reviewers`, { reviewerIds }, config);
     return response.data;
   },
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, File, Eye, Trash2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, File, Eye, Trash2, UserRoundCheck } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 
 const getFileIcon = (fileType) => {
@@ -25,7 +25,7 @@ const formatSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
-const DocumentCard = ({ document, onPreview, onDelete }) => {
+const DocumentCard = ({ document, onPreview, onDelete, onAssignReviewers }) => {
   const handleDelete = () => {
     if (window.confirm('Are you sure you want to delete this document?')) {
       onDelete(document.id || document._id);
@@ -61,10 +61,21 @@ const DocumentCard = ({ document, onPreview, onDelete }) => {
         </div>
       </div>
       
-      <div className="flex items-center justify-between md:justify-end gap-3 md:gap-4 shrink-0 mt-1 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-gray-100 dark:border-slate-700">
+      <div className="flex flex-wrap items-center justify-between md:justify-end gap-3 md:gap-4 mt-1 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-gray-100 dark:border-slate-700">
         <StatusBadge status={document.status} className="shrink-0" />
         
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
+          {onAssignReviewers && (
+            <button
+              type="button"
+              onClick={() => onAssignReviewers(document)}
+              aria-label={`Assign reviewers for ${document.originalName}`}
+              title="Assign reviewers"
+              className="flex h-8 w-8 items-center justify-center text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500"
+            >
+              <UserRoundCheck className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
           <button
             onClick={() => onPreview(document.id || document._id)}
             className="flex items-center justify-center gap-1 h-[28px] px-3 text-xs font-semibold text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-100 hover:border-amber-200 dark:bg-amber-900/20 dark:hover:bg-amber-900/40 dark:border-amber-800/30 dark:text-amber-400 rounded-md transition-colors"
