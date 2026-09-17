@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import {
   Activity, FileUp, ChevronRight,
   Upload, Database, MessageSquare, ArrowRight
@@ -10,11 +10,15 @@ import UploadProgress from '../components/upload/UploadProgress';
 import DocumentFilters from '../components/documents/DocumentFilters';
 import DocumentList from '../components/documents/DocumentList';
 import DocumentPreview from '../components/documents/DocumentPreview';
+import ReviewerAssignmentDialog from '../components/documents/ReviewerAssignmentDialog';
+import { AuthContext } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 
 import { DocumentWorkspaceSummary, DocumentNextSteps } from '../components/documents/DocumentWorkspaceSummary';
 
 const Dashboard = () => {
+  const { user } = useContext(AuthContext);
+  const [assignmentDocument, setAssignmentDocument] = useState(null);
   const [filters, setFilters] = useState({ search: '', type: '', status: '' });
   const { documents, loading, error, fetchDocuments } = useDocuments(filters);
   const [uploads, setUploads] = useState([]);
@@ -188,6 +192,7 @@ const Dashboard = () => {
                   loading={loading}
                   onPreview={handlePreview}
                   onDelete={handleDelete}
+                  onAssignReviewers={user?.role === 'admin' ? setAssignmentDocument : undefined}
                 />
               )}
             </div>
@@ -226,6 +231,13 @@ const Dashboard = () => {
         </div>
       </div>
       
+      {user?.role === 'admin' && assignmentDocument && (
+        <ReviewerAssignmentDialog
+          key={assignmentDocument._id || assignmentDocument.id}
+          document={assignmentDocument}
+          onClose={() => setAssignmentDocument(null)}
+        />
+      )}
       <DocumentPreview
         document={previewDoc}
         isOpen={previewOpen}

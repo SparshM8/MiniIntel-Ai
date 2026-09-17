@@ -2,7 +2,7 @@ import React from 'react';
 import DocumentCard from './DocumentCard';
 import EmptyState from '../common/EmptyState';
 
-const DocumentList = ({ documents, loading, onPreview, onDelete }) => {
+const DocumentList = ({ documents, loading, onPreview, onDelete, onAssignReviewers }) => {
   if (loading) {
     return (
       <div className="flex flex-col gap-3">
@@ -38,6 +38,7 @@ const DocumentList = ({ documents, loading, onPreview, onDelete }) => {
           document={doc}
           onPreview={onPreview}
           onDelete={onDelete}
+          onAssignReviewers={onAssignReviewers}
         />
       ))}
     </div>
