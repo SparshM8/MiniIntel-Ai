@@ -15,13 +15,18 @@ function stable(value) {
 function payloadHash(documentId, reconciliationCase, output) {
   return crypto.createHash('sha256').update(stable({ documentId: documentId.toString(), reconciliationCase, output })).digest('hex');
 }
-async function authorizeDocument(documentId, actor, DocumentModel = Document) {
+async function authorizeDocument(documentId, actor, DocumentModel = Document, access = 'read') {
   const id = actorId(actor);
   if (!id) throw serviceError('AUTH_REQUIRED', 401, 'Authenticated actor is required.');
   if (!mongoose.isValidObjectId(documentId)) throw serviceError('INVALID_DOCUMENT_ID', 400, 'Document ID is invalid.');
-  const document = await DocumentModel.findById(documentId).select('_id userId').lean();
+  const document = await DocumentModel.findById(documentId).select('_id userId reviewerIds').lean();
   if (!document) throw serviceError('DOCUMENT_NOT_FOUND', 404, 'Document was not found.');
-  if (actor.role !== 'admin' && document.userId?.toString() !== id) throw serviceError('DOCUMENT_FORBIDDEN', 403, 'Document access is forbidden.');
+  const ownsDocument = document.userId?.toString() === id;
+  const assigned = document.reviewerIds?.some(reviewerId => reviewerId.toString() === id) || false;
+  const canUseAssignment = access !== 'manage' && actor.role === 'reviewer';
+  if (actor.role !== 'admin' && !ownsDocument && !(canUseAssignment && assigned)) {
+    throw serviceError('DOCUMENT_FORBIDDEN', 403, 'Document access is forbidden.');
+  }
   return document;
 }
 async function listReconciliations({ documentId, actor }, dependencies = {}) {
@@ -42,7 +47,7 @@ async function getReconciliation({ recordId, actor }, dependencies = {}) {
 async function createReconciliation({ documentId, reconciliationCase, actor }, dependencies = {}) {
   const DocumentModel = dependencies.DocumentModel || Document;
   const RecordModel = dependencies.RecordModel || ReconciliationRecord;
-  await authorizeDocument(documentId, actor, DocumentModel);
+    await authorizeDocument(documentId, actor, DocumentModel, 'manage');
   const output = reconcile(reconciliationCase);
   if (output.reasonCode === 'INVALID_CONTRACT') {
     const error = serviceError('INVALID_RECONCILIATION_CASE', 400, 'Reconciliation case does not satisfy the evidence contract.');

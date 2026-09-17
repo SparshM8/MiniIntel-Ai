@@ -61,13 +61,14 @@ function App() {
                     <Route path="audit" element={<AuditTrail />} />
                     <Route path="settings" element={<Settings />} />
                     <Route path="help" element={<HelpSupport />} />
+                    <Route path="reconciliations" element={<ProtectedRoute allowedRoles={['reviewer', 'admin']}><ReconciliationReview /></ProtectedRoute>} />
                     
                     {/* Admin Specific Screens */}
                     <Route element={<ProtectedRoute adminOnly={true} />}>
                       <Route path="admin/users" element={<AdminUsers />} />
                       <Route path="admin/system-health" element={<SystemHealth />} />
                       <Route path="admin/pending-reviews" element={<AdminPendingReviews />} />
-                      <Route path="admin/reconciliations" element={<ReconciliationReview />} />
+                      <Route path="admin/reconciliations" element={<Navigate to="/reconciliations" replace />} />
                     </Route>
                   </Route>
                 </Route>

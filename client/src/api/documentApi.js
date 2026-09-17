@@ -74,6 +74,16 @@ export const documentApi = {
     return response.data;
   },
 
+      /**
+   * Replace reviewer assignments (admin only)
+   * @param {string} id
+   * @param {string[]} reviewerIds
+   */
+  assignReviewers: async (id, reviewerIds) => {
+    const response = await apiClient.put(`/documents/${id}/reviewers`, { reviewerIds });
+    return response.data;
+  },
+
   /**
    * Reprocess / re-extract document
    * @param {string} id

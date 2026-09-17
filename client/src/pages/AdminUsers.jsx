@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Shield, Loader2, AlertCircle } from 'lucide-react';
+import { Users, Loader2, AlertCircle } from 'lucide-react';
 import userApi from '../api/userApi';
 
 const AdminUsers = () => {
@@ -76,11 +76,13 @@ const AdminUsers = () => {
                     <td className="px-6 py-4">
                       <select
                         value={user.role}
+                        disabled={user.role === 'admin'}
                         onChange={(e) => handleRoleChange(user._id, e.target.value)}
                         className="bg-slate-50 dark:bg-dark-bg border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white rounded px-2 py-1 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-xs"
                       >
-                        <option value="user">User</option>
-                        <option value="admin">Admin</option>
+                                                <option value="user">User</option>
+                        <option value="reviewer">Reviewer</option>
+                        {user.role === 'admin' && <option value="admin">Admin</option>}
                       </select>
                     </td>
                   </tr>

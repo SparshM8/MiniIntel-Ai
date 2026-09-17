@@ -6,13 +6,15 @@ const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const upload = require('../../../middleware/upload');
-const { authenticate } = require('../../../middleware/auth');
+const { authenticate, authorize } = require('../../../middleware/auth');
 const Document = require('../../../models/Document');
+const User = require('../../../models/User');
 const DocumentPage = require('../../../models/DocumentPage');
 const DocumentChunk = require('../../../models/DocumentChunk');
 const ProcessingJob = require('../../../models/ProcessingJob');
 const ExtractedRecord = require('../../../models/ExtractedRecord');
 const { processDocument } = require('../../../services/processingService');
+const auditService = require('../../../services/auditService');
 const validationController = require('../../../controllers/validationController');
 const { sendSuccess, sendError } = require('../../../utils/apiResponse');
 const validate = require('../../../validators/validate');
@@ -125,11 +127,11 @@ router.get('/', authenticate, async (req, res, next) => {
       query.uploadedAt = {};
       if (dateFrom) query.uploadedAt.$gte = new Date(dateFrom);
       if (dateTo) query.uploadedAt.$lte = new Date(dateTo);
-    }
+        }
 
-    // Role-based access: normal users only see their own documents
     if (req.user.role !== 'admin') {
-      query.userId = req.user._id;
+      query.$or = [{ userId: req.user._id }];
+      if (req.user.role === 'reviewer') query.$or.push({ reviewerIds: req.user._id });
     }
 
     const pageNum = Math.max(1, parseInt(page) || 1);
@@ -153,6 +155,33 @@ router.get('/', authenticate, async (req, res, next) => {
 });
 
 /**
+  * @route   PUT /api/v1/documents/:id/reviewers
+ * @desc    Replace document reviewer assignments
+ * @access  Admin
+ */
+router.put('/:id/reviewers', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.id)) return sendError(res, 'Invalid document ID format', 'INVALID_ID', 400);
+    const reviewerIds = req.body?.reviewerIds;
+    if (!Array.isArray(reviewerIds) || reviewerIds.length > 100 || reviewerIds.some(id => !isValidId(id))) {
+      return sendError(res, 'reviewerIds must be an array of at most 100 valid user IDs', 'INVALID_REVIEWERS', 400);
+    }
+        const uniqueIds = [...new Set(reviewerIds.map(String))];
+    const reviewers = await User.find({ _id: { $in: uniqueIds }, role: 'reviewer', status: 'active' }).select('_id');
+    if (reviewers.length !== uniqueIds.length) {
+      return sendError(res, 'Every assignment must identify an active reviewer', 'INVALID_REVIEWERS', 400);
+    }
+    const document = await Document.findById(req.params.id);
+        if (!document) return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
+    document.reviewerIds = uniqueIds;
+    await document.save();
+    auditService.logAudit({ user: req.user._id, action: 'ASSIGN_DOCUMENT_REVIEWERS', resource: 'Document',
+      resourceId: document._id, details: { reviewerIds: uniqueIds } });
+    return sendSuccess(res, { documentId: document._id, reviewerIds: document.reviewerIds }, 'Review assignments updated');
+  } catch (error) { next(error); }
+});
+
+/**
  * @route   GET /api/v1/documents/:id
  * @desc    Get document details and extracted pages
  * @access  Private (Owner or Admin)
@@ -166,9 +195,11 @@ router.get('/:id', authenticate, async (req, res, next) => {
     const document = await Document.findById(req.params.id);
     if (!document) {
       return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
-    }
+        }
 
-    if (req.user.role !== 'admin' && document.userId?.toString() !== req.user._id.toString()) {
+    const assigned = document.reviewerIds?.some(id => id.toString() === req.user._id.toString());
+    if (req.user.role !== 'admin' && document.userId?.toString() !== req.user._id.toString()
+      && !(req.user.role === 'reviewer' && assigned)) {
       return sendError(res, 'Access denied: not authorized to view this document', 'FORBIDDEN', 403);
     }
 
@@ -394,8 +425,15 @@ router.get('/:id/status', authenticate, async (req, res, next) => {
   try {
     if (!isValidId(req.params.id)) {
       return sendError(res, 'Invalid document ID format', 'INVALID_ID', 400);
-    }
+        }
 
+    const document = await Document.findById(req.params.id).select('userId reviewerIds');
+    if (!document) return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
+    const assigned = document.reviewerIds?.some(id => id.toString() === req.user._id.toString());
+    if (req.user.role !== 'admin' && document.userId?.toString() !== req.user._id.toString()
+      && !(req.user.role === 'reviewer' && assigned)) {
+      return sendError(res, 'Access denied: not authorized to view processing status', 'FORBIDDEN', 403);
+    }
     const job = await ProcessingJob.findOne({ documentId: req.params.id });
     if (!job) {
       return sendError(res, 'Processing job not found', 'JOB_NOT_FOUND', 404);

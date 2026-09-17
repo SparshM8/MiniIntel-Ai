@@ -37,9 +37,10 @@ const documentSchema = new mongoose.Schema({
     longitude: { type: Number },
     region: { type: String }
   },
-  uploadedAt: { type: Date, default: Date.now },
+    uploadedAt: { type: Date, default: Date.now },
   processedAt: Date,
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reviewerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
 });
 
 documentSchema.virtual('id').get(function() {
