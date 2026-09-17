@@ -24,6 +24,21 @@ test('document authorization rejects missing actors and malformed IDs before loo
   await expectCode(authorizeDocument('bad', { _id: objectId(), role: 'admin' }, DocumentModel), 'INVALID_DOCUMENT_ID', 400);
 });
 
+test('only assigned reviewer or official receives delegated document access', async () => {
+  const ownerId = objectId();
+  const assignedId = objectId();
+  const documentId = objectId();
+  const DocumentModel = { findById: () => ({ select: () => ({ lean: async () => ({
+    _id: documentId, userId: ownerId, reviewerIds: [assignedId]
+  }) }) }) };
+  for (const role of ['reviewer', 'official']) {
+    assert.equal((await authorizeDocument(documentId, { _id: assignedId, role }, DocumentModel))._id, documentId);
+    await expectCode(authorizeDocument(documentId, { _id: assignedId, role }, DocumentModel, 'manage'), 'DOCUMENT_FORBIDDEN', 403);
+  }
+  await expectCode(authorizeDocument(documentId, { _id: assignedId, role: 'user' }, DocumentModel), 'DOCUMENT_FORBIDDEN', 403);
+  await expectCode(authorizeDocument(documentId, { _id: objectId(), role: 'reviewer' }, DocumentModel), 'DOCUMENT_FORBIDDEN', 403);
+});
+
 test('create rejects invalid evidence contracts before persistence', async () => {
   const owner = { _id: objectId(), role: 'user' };
   const documentId = objectId();

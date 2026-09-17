@@ -2,9 +2,9 @@ import React, { useContext } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, Brain, ShieldCheck, Database, MessageSquare, 
-  BarChart2, Hash, FileOutput, Monitor, ScrollText, ChevronLeft, 
+    BarChart2, Hash, FileOutput, Monitor, ScrollText, ChevronLeft,
   ChevronRight, LogOut, Users, Activity, Sparkles, FileCheck, Settings,
-    HelpCircle, GitCompareArrows
+  HelpCircle, GitCompareArrows
 } from 'lucide-react';
 import { AuthContext } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -37,7 +37,7 @@ const navGroups = [
       { to: '/audit', icon: ScrollText, label: 'Audit Trail' },
       { to: '/admin/users', icon: Users, label: 'User Management', adminOnly: true },
       { to: '/admin/pending-reviews', icon: FileCheck, label: 'Pending Reviews', adminOnly: true },
-      { to: '/admin/reconciliations', icon: GitCompareArrows, label: 'Reconciliations', adminOnly: true }
+      { to: '/reconciliations', icon: GitCompareArrows, label: 'Reconciliations', roles: ['reviewer', 'official', 'admin'] }
     ]
   }
 ];
@@ -75,7 +75,9 @@ const Sidebar = ({ isCollapsed, toggleSidebar, isMobileOpen, closeMobileMenu }) 
         {/* Navigation */}
         <nav className="px-2 py-4 flex-1">
           {navGroups.map((group, groupIndex) => {
-            const visibleItems = group.items.filter(item => !(item.adminOnly && user?.role !== 'admin'));
+            const visibleItems = group.items.filter(item =>
+              !(item.adminOnly && user?.role !== 'admin') && (!item.roles || item.roles.includes(user?.role))
+            );
             if (visibleItems.length === 0) return null;
 
             return (

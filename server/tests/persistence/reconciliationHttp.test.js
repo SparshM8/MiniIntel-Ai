@@ -78,15 +78,14 @@ test('owner creates idempotently, lists, and reads a reconciliation', async () =
 
 test('review decisions enforce role, idempotency, and optimistic versions', async () => {
   const decision = { requestId: randomUUID(), decision: 'accept', reason: 'Evidence verified', expectedVersion: 0 };
-  assert.equal((await request(`/${recordId}/decisions`, 'POST', decision, owner)).status, 403);
-  const accepted = await request(`/${recordId}/decisions`, 'POST', decision, reviewer);
-  assert.equal(accepted.status, 403, 'reviewers cannot review documents they do not own');
-  reviewer.role = 'admin';
-  await reviewer.save();
-  process.env.ADMIN_USERNAME = reviewer.username;
-  const adminAccepted = await request(`/${recordId}/decisions`, 'POST', decision, reviewer);
-  assert.equal(adminAccepted.status, 200);
-  assert.equal(adminAccepted.body.data.reviewVersion, 1);
+    assert.equal((await request(`/${recordId}/decisions`, 'POST', decision, owner)).status, 403);
+  const unassigned = await request(`/${recordId}/decisions`, 'POST', decision, reviewer);
+  assert.equal(unassigned.status, 403, 'unassigned reviewers cannot review foreign documents');
+  document.reviewerIds = [reviewer._id];
+  await document.save();
+  const assignedAccepted = await request(`/${recordId}/decisions`, 'POST', decision, reviewer);
+  assert.equal(assignedAccepted.status, 200);
+  assert.equal(assignedAccepted.body.data.reviewVersion, 1);
   assert.equal((await request(`/${recordId}/decisions`, 'POST', decision, reviewer)).status, 200);
   assert.equal((await request(`/${recordId}/decisions`, 'POST', { ...decision, reason: 'Changed' }, reviewer)).status, 409);
   const stale = { requestId: randomUUID(), decision: 'reject', reason: 'Stale review', expectedVersion: 0 };

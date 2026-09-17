@@ -22,8 +22,11 @@ router.put('/users/:id/role', authenticate, admin, async (req, res, next) => {
     const user = await User.findById(req.params.id);
     if (!user) return sendError(res, 'User not found', 'USER_NOT_FOUND', 404);
 
-    if (req.body.role === 'admin') {
-      return sendError(res, 'Only predefined admin identity can hold the admin role', 'FORBIDDEN_ROLE_ASSIGNMENT', 403);
+        if (!['user', 'reviewer', 'official'].includes(req.body.role)) {
+      return sendError(res, 'Role must be user, reviewer, or official', 'INVALID_ROLE_ASSIGNMENT', 400);
+    }
+    if (user.role === 'admin' || user._id.toString() === req.user._id.toString()) {
+      return sendError(res, 'Administrator roles cannot be changed through this endpoint', 'FORBIDDEN_ROLE_ASSIGNMENT', 403);
     }
 
     user.role = req.body.role;
