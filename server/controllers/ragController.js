@@ -25,7 +25,7 @@ const search = async (req, res) => {
       return res.status(400).json({ message: 'Query is required' });
     }
     
-    const results = await ragService.searchSimilar(query, topK || 5);
+    const results = await ragService.searchSimilar(query, topK || 5, { user: req.user });
     res.status(200).json(results);
   } catch (error) {
     res.status(500).json({ message: 'Error searching documents', error: error.message });

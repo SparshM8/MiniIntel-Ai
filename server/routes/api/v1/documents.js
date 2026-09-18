@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const path = require('path');
+const { getUploadPath } = require('../../../config/storage');
 const fs = require('fs');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
@@ -252,8 +253,7 @@ router.delete('/:id', authenticate, async (req, res, next) => {
       ExtractedRecord.deleteMany({ documentId: req.params.id })
     ]);
 
-    const baseDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '../../..');
-    const filePath = path.join(baseDir, 'uploads', document.filename);
+    const filePath = getUploadPath(document.filename);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
@@ -284,8 +284,7 @@ router.get('/:id/download', authenticate, async (req, res, next) => {
       return sendError(res, 'Access denied: not authorized to download this document', 'FORBIDDEN', 403);
     }
 
-    const baseDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '../../..');
-    const filePath = path.join(baseDir, 'uploads', document.filename);
+    const filePath = getUploadPath(document.filename);
 
     if (!fs.existsSync(filePath)) {
       return sendError(res, 'Document file not found on storage disk', 'FILE_NOT_FOUND', 404);

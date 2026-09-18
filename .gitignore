@@ -13,6 +13,7 @@ server/uploads/*
 client/dist/
 client/test-results/
 client/playwright-report/
+/API_TEST_REPORT.md
 
 # IDE
 .vscode/

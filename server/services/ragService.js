@@ -1,5 +1,7 @@
 const DocumentChunk = require('../models/DocumentChunk');
 const llmService = require('./llmService');
+const Document = require('../models/Document');
+const { documentScope } = require('../utils/documentScope');
 
 // Simple cosine similarity calculation
 const cosineSimilarity = (vecA, vecB) => {
@@ -70,13 +72,9 @@ const searchSimilar = async (query, topK = 5, options = null) => {
   let allChunks = cachedChunks;
 
   // Apply filters if provided
-  if (user && user.role !== 'admin') {
-    allChunks = allChunks.filter(c => {
-      const doc = c.documentId;
-      if (!doc || !doc.userId) return true;
-      return doc.userId.toString() === user._id.toString();
-    });
-  }
+  const accessibleDocuments = await Document.find(documentScope(user)).select('_id').lean();
+  const accessibleIds = new Set(accessibleDocuments.map(document => String(document._id)));
+  allChunks = allChunks.filter(chunk => chunk.documentId && accessibleIds.has(String(chunk.documentId._id)));
 
   if (filters.document || filters.documentId) {
     const targetDocId = (filters.document || filters.documentId).toString();

@@ -1,4 +1,5 @@
 const path = require('path');
+const { getUploadPath } = require('../config/storage');
 const { toDocumentPageRecord } = require('../utils/documentPageRecord');
 const Document = require('../models/Document');
 const ProcessingJob = require('../models/ProcessingJob');
@@ -55,8 +56,7 @@ const processDocument = async (documentId) => {
     };
 
     // Environment-aware path
-    const baseDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..');
-    const filePath = path.join(baseDir, 'uploads', document.filename);
+    const filePath = getUploadPath(document.filename);
     
     let extractedPages = [];
 

@@ -1,113 +1,96 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Search, ArrowRight, Loader2, BookOpen, FileText } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import api from '../services/api';
+import { Cloud, List, RefreshCw, Search, ArrowUpRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import api from '../api/client';
 
 const TopicsExplorer = () => {
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const navigate = useNavigate();
+  const [overview, setOverview] = useState(null);
+  const [revision, setRevision] = useState(0);
+  const [query, setQuery] = useState('');
+  const [view, setView] = useState('cloud');
+  const [selected, setSelected] = useState(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchTopics = async () => {
+      setLoading(true);
+      setError(null);
+      setOverview(null);
+      setTopics([]);
+      setSelected(null);
       try {
-        const res = await api.get('/topics');
+        const res = await api.get('/topics', { signal: controller.signal });
+        const data = res.data;
+        if (!Array.isArray(data?.data) || !Array.isArray(data?.wordCloud) ||
+            !['analyzedDocuments', 'processedDocuments', 'topicCount'].every(key => Number.isSafeInteger(data.meta?.[key]) && data.meta[key] >= 0) ||
+            !data.data.every(topic => typeof topic.name === 'string' && Number.isSafeInteger(topic.documentCount) && topic.documentCount > 0) ||
+            !data.wordCloud.every(word => typeof word.text === 'string' && Number.isSafeInteger(word.count) && word.count > 0 && Number.isSafeInteger(word.documentCount) && word.documentCount > 0)) {
+          throw new Error('Invalid topics response');
+        }
+        if (controller.signal.aborted) return;
         setTopics(res.data.data);
+        setOverview(data);
         setError(null);
       } catch (err) {
-        setError('Failed to load topics. Please try again later.');
+        if (!controller.signal.aborted) setError('Topics are unavailable. Please reload.');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     fetchTopics();
-  }, []);
+    return () => controller.abort();
+  }, [revision]);
 
-  const handleExplore = (topicName) => {
-    navigate(`/knowledge-base?q=${encodeURIComponent(topicName)}`);
-  };
+  const words = (overview?.wordCloud || []).filter(word => word.text.includes(query.trim().toLocaleLowerCase()));
+  const filteredTopics = topics.filter(topic => topic.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const maximum = Math.max(1, ...(overview?.wordCloud || []).map(word => word.count));
+  const count = key => loading ? 'Loading...' : error ? 'Unavailable' : overview?.meta[key] ?? 0;
+  const palette = ['#166534', '#9f1239', '#155e75', '#854d0e', '#4338ca'];
 
   return (
-    <div className="p-5 max-w-7xl mx-auto text-gray-800 dark:text-neutral-200">
-      <div className="mb-5">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Topics Explorer</h1>
-        <p className="text-gray-600 dark:text-slate-400">Explore key themes and insights across your mining knowledge base.</p>
+    <div className="p-5 max-w-7xl mx-auto text-gray-800 dark:text-neutral-200 min-w-0">
+      <header className="flex items-center justify-between gap-3 mb-6">
+        <h1 className="text-2xl font-bold">Topics Explorer</h1>
+        <button type="button" title="Reload topics" aria-label="Reload topics" disabled={loading} onClick={() => setRevision(value => value + 1)} className="p-2 rounded border border-gray-300 disabled:opacity-40">
+          <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </header>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-y border-gray-200 dark:border-neutral-700 py-4 mb-6">
+        {[
+          ['Processed documents', 'processedDocuments'],
+          ['Documents with topics', 'analyzedDocuments'],
+          ['Discovered topics', 'topicCount']
+        ].map(([label, key]) => <section key={key} aria-label={label}>
+          <h2 className="text-sm text-gray-500 dark:text-neutral-400">{label}</h2>
+          <p className="text-xl font-semibold mt-1" aria-live="polite">{count(key)}</p>
+        </section>)}
       </div>
-
-      {/* Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
-        <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 p-5 rounded-lg shadow-sm">
-          <div className="flex items-center gap-3 text-amber-500 mb-2">
-            <Layers className="w-5 h-5" />
-            <h3 className="font-semibold text-neutral-700 dark:text-neutral-300">Total Topics</h3>
+      {error && <p role="alert" className="text-red-700 dark:text-red-300 mb-4">{error}</p>}
+      {!loading && !error && <>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <label className="flex items-center gap-2 border rounded px-3 py-2 min-w-0 w-full sm:w-72">
+            <Search size={18} className="shrink-0" />
+            <input aria-label="Filter topics and words" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search topics and words" className="bg-transparent min-w-0 w-full outline-none" />
+          </label>
+          <div className="flex gap-1" role="group" aria-label="Word display">
+            {[[Cloud, 'cloud', 'Word cloud'], [List, 'list', 'Word frequencies']].map(([Icon, mode, label]) => <button key={mode} type="button" title={label} aria-label={label} aria-pressed={view === mode} onClick={() => setView(mode)} className={`p-2 border rounded ${view === mode ? 'bg-gray-200 dark:bg-neutral-700' : ''}`}><Icon size={20} /></button>)}
           </div>
-          <p className="text-3xl font-bold text-neutral-900 dark:text-white">{loading ? '-' : topics.length}</p>
         </div>
-        <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 p-5 rounded-lg shadow-sm">
-          <div className="flex items-center gap-3 text-amber-500 mb-2">
-            <BookOpen className="w-5 h-5" />
-            <h3 className="font-semibold text-neutral-700 dark:text-neutral-300">Documents Analyzed</h3>
-          </div>
-          <p className="text-3xl font-bold text-neutral-900 dark:text-white">5</p>
-        </div>
-        <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 p-5 rounded-lg md:col-span-2 shadow-sm">
-          <div className="flex items-center gap-3 text-amber-500 mb-2">
-            <Search className="w-5 h-5" />
-            <h3 className="font-semibold text-neutral-700 dark:text-neutral-300">Most Relevant Topic</h3>
-          </div>
-          <p className="text-xl font-bold text-neutral-900 dark:text-white mt-2 truncate">
-            {loading ? '-' : topics.length > 0 ? topics[0].name : 'N/A'}
-          </p>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center p-12 text-amber-400">
-          <Loader2 className="w-8 h-8 animate-spin mr-3" />
-          <span className="text-lg">Analyzing topics...</span>
-        </div>
-      ) : error ? (
-        <div className="bg-red-950/30 border border-red-900/50 text-red-400 p-4 rounded-lg">
-          {error}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {topics.map(topic => (
-            <div 
-              key={topic._id} 
-              onClick={() => handleExplore(topic.name)}
-              className="hover-lift bg-white dark:bg-dark-card border border-slate-200 dark:border-slate-700 p-5 rounded-lg flex flex-col transition-all cursor-pointer group hover:border-amber-500/50 hover:shadow-lg"
-            >
-              <h3 className="text-xl font-bold text-neutral-900 dark:text-white mb-2 group-hover:text-amber-500 dark:group-hover:text-amber-400 transition-colors">{topic.name}</h3>
-              <p className="text-gray-500 dark:text-slate-400 text-sm flex-grow mb-4 leading-relaxed">{topic.description}</p>
-              
-              {topic.relatedTopics && topic.relatedTopics.length > 0 && (
-                <div className="mb-4">
-                  <p className="text-xs font-semibold text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-1.5">Related Topics</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {topic.relatedTopics.slice(0, 3).map((rt, idx) => (
-                      <span key={idx} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-                        {rt.topicId?.name || 'Topic'}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-between mt-auto pt-4 border-t border-neutral-100 dark:border-slate-700">
-                <span className="text-sm font-medium text-slate-400 dark:text-slate-400 flex items-center gap-1.5">
-                  <FileText className="w-4 h-4" />
-                  {topic.documentCount} Ref
-                </span>
-                <span className="text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1 rounded-md">
-                  Match: {Math.round(topic.relevanceScore * 100)}%
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+        <section aria-label="Word frequencies" className="border-b border-gray-200 dark:border-neutral-700 pb-6">
+          <h2 className="text-lg font-semibold mb-3">Document Word Cloud</h2>
+          {!words.length ? <p className="text-gray-500 dark:text-neutral-400 py-8">{query ? 'No matching words.' : 'No processed document text available.'}</p> : view === 'cloud' ? <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-3 min-h-64 py-6 bg-white rounded" aria-label="Word cloud visualization">
+            {words.map((word, index) => <button key={word.text} type="button" title={`${word.text}: ${word.count} occurrences in ${word.documentCount} documents`} aria-label={`${word.text}: ${word.count} occurrences in ${word.documentCount} documents`} aria-pressed={selected?.text === word.text} onClick={() => setSelected(word)} className="max-w-full px-1 leading-tight hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" style={{ fontSize: `${Math.min(word.text.length > 18 ? 24 : 42, 16 + 26 * Math.sqrt(word.count / maximum))}px`, overflowWrap: 'anywhere', color: palette[index % palette.length], fontWeight: 600 }}>{word.text}</button>)}
+          </div> : <table className="w-full text-sm table-fixed"><thead><tr className="text-left border-b"><th className="py-2">Word</th><th>Occurrences</th><th>Documents</th></tr></thead><tbody>{words.map(word => <tr key={word.text} className="border-b border-gray-100 dark:border-neutral-800"><td className="py-2 break-words">{word.text}</td><td>{word.count}</td><td>{word.documentCount}</td></tr>)}</tbody></table>}
+          {selected && <div role="status" className="mt-4 flex flex-wrap items-center gap-3 text-sm"><strong className="break-all">{selected.text}</strong><span>{selected.count} occurrences</span><span>{selected.documentCount} documents</span><Link className="underline inline-flex items-center gap-1" to={`/knowledge-base?q=${encodeURIComponent(selected.text)}`}>Search evidence <ArrowUpRight size={16} /></Link></div>}
+        </section>
+        <section aria-label="Discovered topic list" className="mt-6">
+          <h2 className="text-lg font-semibold mb-3">Discovered Topics</h2>
+          {!filteredTopics.length ? <p className="text-gray-500 dark:text-neutral-400">{query ? 'No matching topics.' : 'No topics discovered yet.'}</p> : <ul className="divide-y divide-gray-200 dark:divide-neutral-700">{filteredTopics.map(topic => <li key={topic._id}><Link className="flex justify-between items-center gap-4 py-4 hover:underline" to={`/knowledge-base?q=${encodeURIComponent(topic.name)}`}><span className="min-w-0 break-words">{topic.name}</span><span className="text-sm shrink-0">{topic.documentCount} documents</span></Link></li>)}</ul>}
+        </section>
+      </>}
     </div>
   );
 };

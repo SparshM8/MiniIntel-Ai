@@ -3,7 +3,7 @@
  */
 
 const getCorsOrigins = () => {
-  const defaultOrigins = [
+  const defaultOrigins = process.env.NODE_ENV === 'production' ? [] : [
     'http://localhost:5173',
     'http://localhost:3000',
     'http://127.0.0.1:5173',
@@ -24,7 +24,7 @@ const corsOptions = {
     if (!origin || allowed.includes(origin)) {
       return callback(null, true);
     }
-    return callback(null, true); // Permissive in development to prevent local port mismatch
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

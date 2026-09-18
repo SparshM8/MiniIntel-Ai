@@ -1,5 +1,22 @@
 const intelligenceService = require('../services/intelligenceService');
 const Document = require('../models/Document');
+const { documentScope, validDocumentId } = require('../utils/documentScope');
+
+async function accessibleDocument(req, res, documentId) {
+  if (!validDocumentId(documentId)) {
+    res.status(400).json({ success: false, message: 'Invalid document ID' });
+    return null;
+  }
+  const document = await Document.findOne({ ...documentScope(req.user), _id: documentId });
+  if (!document) res.status(404).json({ success: false, message: 'Document not found' });
+  return document;
+}
+
+function requireAdmin(req, res) {
+  if (req.user?.role === 'admin') return true;
+  res.status(403).json({ success: false, message: 'Global analytics require administrator access' });
+  return false;
+}
 
 /**
  * REST v1: GET /api/v1/intelligence
@@ -25,15 +42,13 @@ exports.analyzeIntelligence = async (req, res, next) => {
     const documentId = req.body?.documentId || req.query?.documentId;
     
     if (documentId) {
-      const doc = await Document.findById(documentId);
-      if (!doc) {
-        return res.status(404).json({ success: false, message: 'Document not found' });
-      }
+      const doc = await accessibleDocument(req, res, documentId);
+      if (!doc) return;
 
       const [entities, topics, similar] = await Promise.all([
         intelligenceService.extractEntities(documentId),
         intelligenceService.discoverTopics(documentId),
-        intelligenceService.computeDocumentSimilarity(documentId)
+        intelligenceService.computeDocumentSimilarity(documentId, req.user)
       ]);
 
       return res.status(200).json({
@@ -50,7 +65,7 @@ exports.analyzeIntelligence = async (req, res, next) => {
     }
 
     // If no documentId specified, analyze latest available document
-    const latestDoc = await Document.findOne({ status: { $in: ['completed', 'extracted'] } }).sort({ uploadedAt: -1 });
+    const latestDoc = await Document.findOne({ ...documentScope(req.user), status: { $in: ['completed', 'extracted'] } }).sort({ uploadedAt: -1 });
     if (!latestDoc) {
       return res.status(200).json({
         success: true,
@@ -62,7 +77,7 @@ exports.analyzeIntelligence = async (req, res, next) => {
     const [entities, topics, similar] = await Promise.all([
       intelligenceService.extractEntities(latestDoc._id),
       intelligenceService.discoverTopics(latestDoc._id),
-      intelligenceService.computeDocumentSimilarity(latestDoc._id)
+      intelligenceService.computeDocumentSimilarity(latestDoc._id, req.user)
     ]);
 
     res.status(200).json({
@@ -86,6 +101,7 @@ exports.analyzeIntelligence = async (req, res, next) => {
  */
 exports.getTopicTrends = async (req, res, next) => {
   try {
+    if (!requireAdmin(req, res)) return;
     const trends = await intelligenceService.getTopicTrends();
     if (req.baseUrl.startsWith('/api/v1') || req.originalUrl.startsWith('/api/v1')) {
       return res.status(200).json({
@@ -125,6 +141,7 @@ exports.getAllEntities = async (req, res, next) => {
  */
 exports.getClusters = async (req, res, next) => {
   try {
+    if (!requireAdmin(req, res)) return;
     const data = await intelligenceService.getClusters(req.user, req.query);
     res.status(200).json({
       success: true,
@@ -142,6 +159,7 @@ exports.getClusters = async (req, res, next) => {
 exports.getSimilarity = async (req, res, next) => {
   try {
     const documentId = req.query.document || req.query.documentId;
+    if (documentId && !await accessibleDocument(req, res, documentId)) return;
     const data = await intelligenceService.getSimilarityMatrix(req.user, { document: documentId });
     res.status(200).json({
       success: true,
@@ -160,9 +178,14 @@ exports.detectChanges = async (req, res, next) => {
   try {
     let { docA, docB } = req.query;
 
+    if ((docA && !docB) || (docB && !docA)) {
+      return res.status(400).json({ success: false, message: 'Provide both docA and docB' });
+    }
+    if (docA && (!await accessibleDocument(req, res, docA) || !await accessibleDocument(req, res, docB))) return;
+
     if (!docA || !docB) {
       // Pick two documents with records if not specified
-      const docs = await Document.find({ status: { $in: ['completed', 'extracted'] } })
+      const docs = await Document.find({ ...documentScope(req.user), status: { $in: ['completed', 'extracted'] } })
         .sort({ uploadedAt: -1 })
         .limit(2)
         .select('_id');
@@ -204,8 +227,8 @@ exports.detectChanges = async (req, res, next) => {
 
 exports.getEntities = async (req, res) => {
   try {
-    const doc = await Document.findById(req.params.documentId).select('entities originalName').lean();
-    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    const doc = await accessibleDocument(req, res, req.params.documentId);
+    if (!doc) return;
 
     if (!doc.entities || doc.entities.length === 0) {
       const entities = await intelligenceService.extractEntities(req.params.documentId);
@@ -221,19 +244,10 @@ exports.getEntities = async (req, res) => {
 
 exports.getSimilarDocuments = async (req, res) => {
   try {
-    const doc = await Document.findById(req.params.documentId)
-      .select('similarDocuments originalName')
-      .populate('similarDocuments.documentId', 'originalName fileType category')
-      .lean();
-
-    if (!doc) return res.status(404).json({ error: 'Document not found' });
-
-    if (!doc.similarDocuments || doc.similarDocuments.length === 0) {
-      const results = await intelligenceService.computeDocumentSimilarity(req.params.documentId);
-      return res.json({ documentName: doc.originalName, similar: results });
-    }
-
-    res.json({ documentName: doc.originalName, similar: doc.similarDocuments });
+    const doc = await accessibleDocument(req, res, req.params.documentId);
+    if (!doc) return;
+    const results = await intelligenceService.computeDocumentSimilarity(req.params.documentId, req.user);
+    return res.json({ documentName: doc.originalName, similar: results });
   } catch (error) {
     console.error('Similarity error:', error.message);
     res.status(500).json({ error: error.message });
@@ -242,7 +256,8 @@ exports.getSimilarDocuments = async (req, res) => {
 
 exports.linkEvidence = async (req, res) => {
   try {
-    const linked = await intelligenceService.linkEvidence(req.params.documentId);
+    if (!await accessibleDocument(req, res, req.params.documentId)) return;
+    const linked = await intelligenceService.linkEvidence(req.params.documentId, req.user);
     res.json({ documentId: req.params.documentId, linked });
   } catch (error) {
     console.error('Evidence linking error:', error.message);

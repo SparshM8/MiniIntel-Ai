@@ -3,69 +3,23 @@ const DocumentChunk = require('../models/DocumentChunk');
 const ExtractedRecord = require('../models/ExtractedRecord');
 const Document = require('../models/Document');
 const intelligenceService = require('../services/intelligenceService');
+const { buildTopicOverview } = require('../utils/topicOverview');
 
 /**
  * REST v1 & Legacy: GET /api/v1/topics
  */
 exports.getTopics = async (req, res, next) => {
   try {
-    const dbTopics = await Topic.find({}).lean();
-
-    const defaultTopics = [
-      { name: 'Coal Production', description: 'Metrics and trends related to coal extraction and overall production volume.' },
-      { name: 'Coal Dispatch', description: 'Logistics, transport, and evacuation of coal from mines to endpoints.' },
-      { name: 'Production Targets', description: 'Analysis of actual performance versus planned targets.' },
-      { name: 'Production-Dispatch Gap', description: 'Discrepancies between produced and dispatched quantities.' },
-      { name: 'Operational Risk', description: 'Potential hazards, delays, or bottlenecks affecting mine operations.' },
-      { name: 'Safety', description: 'Safety protocols, incidents, and compliance.' },
-      { name: 'Logistics', description: 'Supply chain, transportation infrastructure, and distribution networks.' },
-      { name: 'Performance', description: 'Overall mine efficiency, yield, and financial performance.' }
-    ];
-
-    // Combine DB topics and default mining taxonomy
-    const allTopics = [...dbTopics];
-    defaultTopics.forEach(dt => {
-      if (!allTopics.some(t => t.name.toLowerCase() === dt.name.toLowerCase())) {
-        allTopics.push({
-          name: dt.name,
-          description: dt.description,
-          keywords: dt.name.toLowerCase().split(' '),
-          weight: 0.8
-        });
-      }
-    });
-
-    const enrichedTopics = await Promise.all(allTopics.map(async (topic) => {
-      const kw = topic.name.split(' ')[0];
-      const chunkCount = await DocumentChunk.countDocuments({ 
-        content: { $regex: kw, $options: 'i' } 
-      });
-      
-      const recordCount = await ExtractedRecord.countDocuments({
-        parameter: { $regex: kw, $options: 'i' }
-      });
-
-      const docCount = (topic.documents && topic.documents.length) 
-        ? topic.documents.length 
-        : (chunkCount > 0 ? 1 : 0);
-      
-      return {
-        _id: topic._id || topic.name.toLowerCase().replace(/\s+/g, '-'),
-        name: topic.name,
-        description: topic.description || `Analysis of ${topic.name} within mining reports.`,
-        keywords: topic.keywords || [kw.toLowerCase()],
-        weight: topic.weight || 0.8,
-        documentCount: docCount,
-        mentionCount: chunkCount + recordCount,
-        relevanceScore: Math.min(0.99, Number(((chunkCount + recordCount) * 0.04 + 0.6).toFixed(2)))
-      };
-    }));
-    
-    enrichedTopics.sort((a, b) => b.mentionCount - a.mentionCount);
+    const filter = req.user.role === 'admin' ? {} : { $or: [{ userId: req.user._id }] };
+    if (req.user.role === 'reviewer') filter.$or.push({ reviewerIds: req.user._id });
+    const documents = await Document.find(filter).select('_id extractedText').lean();
+    const dbTopics = await Topic.find({ documents: { $in: documents.map(document => document._id) } })
+      .select('_id name documents').lean();
+    const overview = buildTopicOverview(documents, dbTopics);
 
     res.status(200).json({
       success: true,
-      data: enrichedTopics,
+      ...overview,
       message: 'Topics retrieved successfully'
     });
   } catch (error) {
@@ -80,9 +34,20 @@ exports.analyzeTopics = async (req, res, next) => {
   try {
     const documentId = req.body?.documentId || req.query?.documentId;
     let targetDocId = documentId;
+    const access = req.user.role === 'admin' ? {} : { $or: [{ userId: req.user._id }] };
+    if (req.user.role === 'reviewer') access.$or.push({ reviewerIds: req.user._id });
+
+    if (targetDocId) {
+      if (!/^[a-f\d]{24}$/i.test(String(targetDocId))) {
+        return res.status(400).json({ success: false, message: 'Invalid document ID' });
+      }
+      if (!await Document.exists({ ...access, _id: targetDocId })) {
+        return res.status(404).json({ success: false, message: 'Document not found' });
+      }
+    }
 
     if (!targetDocId) {
-      const doc = await Document.findOne({ status: { $in: ['completed', 'extracted'] } }).sort({ uploadedAt: -1 });
+      const doc = await Document.findOne({ ...access, status: { $in: ['completed', 'extracted'] } }).sort({ uploadedAt: -1 });
       targetDocId = doc?._id;
     }
 
@@ -95,7 +60,7 @@ exports.analyzeTopics = async (req, res, next) => {
     }
 
     const createdIds = await intelligenceService.discoverTopics(targetDocId);
-    const discovered = await Topic.find({ _id: { $in: createdIds } }).lean();
+    const discovered = await Topic.find({ _id: { $in: createdIds } }).select('_id name').lean();
 
     res.status(200).json({
       success: true,
@@ -275,5 +240,5 @@ exports.getTopicChanges = async (req, res, next) => {
 
 // Legacy stub preserved for /api/topics/extract
 exports.extractTopics = async (req, res, next) => {
-  res.status(200).json({ success: true, data: [] });
+  return exports.analyzeTopics(req, res, next);
 };

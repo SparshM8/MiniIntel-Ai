@@ -1905,15 +1905,67 @@ paths:
   /topics:
     get:
       tags: [Topics]
-      summary: Discovered topic taxonomy list
+      summary: Accessible document topics and word frequencies
+      description: |
+        Owner-scoped; assigned documents are also visible to reviewers, and administrators see all documents.
+        Counts use distinct accessible document IDs. No synthetic taxonomy, relevance score or accuracy estimate is returned.
+        Word frequencies cover available extracted text, normalize Unicode/case and exclude basic English stopwords,
+        numbers and words outside 3-40 characters. Up to 80 terms are returned in descending occurrence order.
+        This is lexical frequency, not semantic importance or calibrated accuracy.
       responses:
         '200':
-          description: Topics array
+          description: Scoped topics, real document counts and word-cloud frequencies
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, meta, wordCloud]
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [_id, name, documentCount]
+                      properties:
+                        _id: { type: string }
+                        name: { type: string }
+                        documentCount: { type: integer, minimum: 1 }
+                  meta:
+                    type: object
+                    required: [topicCount, analyzedDocuments, processedDocuments]
+                    properties:
+                      topicCount: { type: integer, minimum: 0 }
+                      analyzedDocuments:
+                        type: integer
+                        minimum: 0
+                        description: Distinct accessible documents linked to discovered topics, not all processed documents.
+                      processedDocuments:
+                        type: integer
+                        minimum: 0
+                        description: Accessible documents with nonempty extracted text.
+                  wordCloud:
+                    type: array
+                    maxItems: 80
+                    items:
+                      type: object
+                      required: [text, count, documentCount]
+                      properties:
+                        text: { type: string }
+                        count: { type: integer, minimum: 1 }
+                        documentCount: { type: integer, minimum: 1 }
+        '401':
+          description: Authentication required
 
   /topics/analyze:
     post:
       tags: [Topics]
-      summary: Discover topics across document corpus
+      summary: Discover topics for a document
+      description: |
+        Requires ownership, reviewer assignment or administrator access. Without an ID selects the latest accessible processed document.
+        Processes up to 96000 characters in bounded segments; oversized documents are rejected rather than truncated.
+        Provider failures propagate. This endpoint does not certify topic accuracy or temporal trend correctness.
       requestBody:
         required: false
         content:
@@ -1921,17 +1973,24 @@ paths:
             schema:
               type: object
               properties:
-                documentIds:
-                  type: array
-                  items: { type: string }
+                documentId:
+                  type: string
+                  description: Document ID; omitted ID selects the latest accessible processed document.
       responses:
         '200':
           description: Discovered topics
+        '400':
+          description: Invalid document ID
+        '404':
+          description: Document unavailable or inaccessible
+        '422':
+          description: Document exceeds the supported analysis size or AI context limit
 
   /topics/trends:
     get:
       tags: [Topics]
       summary: Topic prominence over time
+      description: Administrator only. Global aggregates; temporal correctness is not independently validated.
       responses:
         '200':
           description: Trends array
@@ -1940,6 +1999,7 @@ paths:
     get:
       tags: [Topics]
       summary: Topic co-occurrence graph
+      description: Administrator only. Global aggregates.
       responses:
         '200':
           description: Clusters object
@@ -2586,7 +2646,20 @@ components:
         approvedBy: { type: string }
         approvedAt: { type: string, format: date-time }
         version: { type: integer }
-        confidenceScore: { type: number }
+        confidenceScore:
+          type: number
+          nullable: true
+          description: Mean valid retrieval similarity for retrieval-similarity-v1 reports, not factual accuracy. Legacy stored scores use older semantics.
+        metricBasis:
+          type: string
+          description: retrieval-similarity-v1 identifies recalculated retrieval metrics, not independently evaluated accuracy.
+        evidenceCoverage:
+          type: object
+          description: Retrieved sources above similarity 0.25, not generated-claim coverage.
+          properties:
+            total: { type: integer }
+            cited: { type: integer }
+            percentage: { type: number, nullable: true }
         language: { type: string }
         createdAt: { type: string, format: date-time }
 

@@ -1203,15 +1203,15 @@ const ReportGenerator = () => {
                   </div>
 
                   {/* Confidence & Coverage Metrics */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     {(report.confidenceScore !== undefined || report.evidenceCoverage) && (
-                      <div className="flex items-center gap-2 text-[11px] bg-white dark:bg-[#101217] border border-slate-200 dark:border-slate-800 px-2.5 py-1 rounded-lg">
+                      <div title="Retrieval similarity is not measured report accuracy or claim coverage" className="flex flex-wrap items-center gap-2 text-[11px] bg-white dark:bg-[#101217] border border-slate-200 dark:border-slate-800 px-2.5 py-1 rounded-lg">
                         <span className="text-amber-600 dark:text-amber-400 font-bold whitespace-nowrap">
-                          Confidence {Math.round((report.confidenceScore || 0) * 100)}%
+                          Similarity {report.metricBasis === 'retrieval-similarity-v1' && Number.isFinite(report.confidenceScore) ? `${Math.round(report.confidenceScore * 100)}%` : 'N/A'}
                         </span>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
                         <span className="text-emerald-600 dark:text-emerald-400 font-bold whitespace-nowrap">
-                          Coverage {report.evidenceCoverage?.percentage || 0}%
+                          Accuracy not evaluated
                         </span>
                       </div>
                     )}
@@ -1326,7 +1326,7 @@ const ReportGenerator = () => {
                         <div>
                           <span className="block text-[10px] font-bold text-slate-400 uppercase">Evidence Grounding</span>
                           <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                            {report.evidenceCoverage?.total || 0} Sources Verified
+                            {report.content?.sources?.length || 0} Sources Retrieved
                           </span>
                         </div>
                       </div>

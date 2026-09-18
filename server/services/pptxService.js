@@ -2,7 +2,8 @@ const officeParser = require('officeparser');
 
 const extractPptxText = async (filePath) => {
   try {
-    const text = await officeParser.parseOfficeAsync(filePath);
+    const parsed = await officeParser.parseOffice(filePath);
+    const { value: text } = await parsed.to('text');
     
     // officeparser returns raw text. We can chunk it by logical page or length.
     
@@ -36,7 +37,7 @@ const extractPptxText = async (filePath) => {
     return { pages };
   } catch (error) {
     console.error("PPTX Parsing error:", error.message);
-    return { pages: [] };
+    throw error;
   }
 };
 

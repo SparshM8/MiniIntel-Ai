@@ -23,6 +23,7 @@ const ReportSchema = new mongoose.Schema({
     date: { type: Date, default: Date.now }
   }],
   confidenceScore: { type: Number, default: 0 },
+  metricBasis: { type: String },
   evidenceCoverage: {
     total: { type: Number, default: 0 },
     cited: { type: Number, default: 0 },

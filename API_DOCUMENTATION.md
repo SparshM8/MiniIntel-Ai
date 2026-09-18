@@ -34,7 +34,7 @@ Optional query parameters: `page` (1..1000000, default 1), `limit` (1..100, defa
 
 Success envelope: `{ "success": true, "data": [...], "meta": { "total": 23, "page": 1, "limit": 20, "pages": 2 }, "pagination": { "total": 23, "page": 1, "limit": 20, "pages": 2 } }`. Counts are permission-scoped. Rows include reconciliation fields, operands, review version and `documentName`, but omit full case snapshots and decision histories. Empty results have `pages: 0`; out-of-range pages have empty data. Ordering is newest creation first, with descending ID as the tie-breaker. Pagination is a live view and may shift as reviews change.
 
-The existing document-specific reconciliation list is unchanged. Deploy the queue API before the updated reviewer UI. For implementation boundaries and test coverage, see [Reconciliation Persistence](docs/planning/RECONCILIATION-PERSISTENCE.md).
+The existing document-specific reconciliation list is unchanged. Deploy the queue API before the updated reviewer UI.
 
 ### 1.1 Base URL Configuration by Target Platform
 
@@ -1274,15 +1274,27 @@ $$\text{Quality Score} = \max(0, 100 - (\text{critical} \times 5 + \text{error} 
 **Base Path:** `/api/v1/topics`  
 **Auth:** Bearer
 
-- `GET /api/v1/topics`: Discovered taxonomy clusters and keywords.
-- `POST /api/v1/topics/analyze`: Body: `{ "documentIds": [...] }` &rarr; Re-computes topic groupings.
+- `GET /api/v1/topics`: Accessible discovered topics, distinct document counts, and a frequency-based word cloud. See contract below.
+- `POST /api/v1/topics/analyze`: Body: `{ "documentId": "..." }` &rarr; Discovers topics for that document; omission currently selects the latest processed document.
 - `GET /api/v1/topics/trends`: Prominence trends of statutory, safety, and operational topics over time.
 - `GET /api/v1/topics/clusters`: Graph representation of topic nodes and co-occurrence edges.
 - `GET /api/v1/topics/entities`: Named entities extracted across mining documents.
 - `GET /api/v1/topics/emerging`: Fast-rising topics (e.g. "Slope Stability Alert", "DGMS Directive").
 - `GET /api/v1/topics/changes`: Topic shifts across successive quarters.
 
+The topics list returns `{ success, data, meta, wordCloud, message }`. `data` contains `{ _id, name, documentCount }`; `meta` contains `topicCount`, `analyzedDocuments` (distinct documents linked to topics), and `processedDocuments` (documents with nonempty extracted text). `wordCloud` contains up to 80 `{ text, count, documentCount }` terms, sorted by occurrences, then alphabetically. It counts all available extracted text, normalizes Unicode/case, excludes basic English stopwords and numbers, and accepts words of 3–40 characters. Word frequency is not semantic relevance or factual accuracy.
+
+List and analysis scope: normal users see their own documents; reviewers also see assigned documents; administrators see all. Analysis without an ID selects the latest accessible processed document. Synthetic default topics, guessed document counts and fabricated relevance percentages have been removed. Consumers must not require legacy `relevanceScore`, `mentionCount`, `weight`, `keywords` or `description` fields from this list. Deploy matching clients and API together. Global `/trends`, `/clusters`, `/entities`, `/emerging` and `/changes` endpoints now require administrator access (403 otherwise). `/extract` invokes the real analysis handler. AI discovery supports up to 96,000 characters in bounded segments, rejects larger inputs, and propagates provider/response failures instead of claiming empty success. Sequential reanalysis, stale-link removal and zero weights have regression coverage; legacy contribution migration and concurrent multi-topic writes remain limitations.
+
 ---
+
+### Security and Metric Compatibility
+
+- Legacy and v1 authentication reject disabled accounts and require a configured private JWT secret; known fallback secrets are rejected. Reviewer login preserves the reviewer role.
+- Intelligence document operations and RAG retrieval use owner/assigned-reviewer/admin scope. RAG refreshes permission checks even when chunks are cached. Global intelligence trends/clusters require administrators.
+- Topic and entity discovery process up to 96,000 characters in bounded segments; oversized input and invalid provider results fail explicitly. Sequential topic reruns replace document contributions; legacy migration and concurrent multi-topic writes remain limitations.
+- New reports expose `metricBasis: retrieval-similarity-v1`. Compatibility field `confidenceScore` is mean valid retrieval similarity or null, not accuracy. `evidenceCoverage` counts retrieved sources above 0.25 and has a null percentage with no sources; it does not measure claim coverage. Evidence responses and JSON exports recalculate metrics and return `accuracyEvaluated: false`. Legacy stored scores must not be interpreted using the new semantics without recalculation.
+- Download original files through the authenticated document download route; public `/uploads` static access is removed.
 
 ### Module 18: Multi-Agent Orchestration
 **Base Path:** `/api/v1/agents`  

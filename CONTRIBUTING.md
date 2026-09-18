@@ -52,8 +52,8 @@ Whether you are fixing a bug, adding an analytical KPI, refining an AI prompt, i
 
 Before writing code or submitting contributions, please ensure you:
 
-1. **Read the Documentation**: Familiarize yourself with the system by reading the [README.md](./README.md), the Flutter client integration guide in [API_DOCUMENTATION.md](./API_DOCUMENTATION.md), and the OpenAPI specification in [openapi.yaml](./openapi.yaml).
-2. **Understand the Architecture**: Understand how the React/Vite frontend communicates with the Express.js REST API layer (`/api/v1`), MongoDB Atlas database, and the Google Gemini LLM/embedding services.
+1. **Read the Documentation**: Start with the [documentation index](docs/README.md), then the [API integration guide](API_DOCUMENTATION.md) and [OpenAPI specification](openapi.yaml).
+2. **Understand the Architecture**: Read the [architecture guide](docs/ARCHITECTURE.md) for the React client, Express API, MongoDB, AI provider and storage boundaries.
 3. **Check Existing Issues**: Search the GitHub Issues and Pull Requests to confirm someone else is not already working on the same problem.
 4. **Discuss Major Changes**: For significant architectural changes, schema alterations, or new modules, open an issue to discuss your proposal with the maintainers before investing substantial development time.
 5. **Protect Sensitive Information**: Never commit secrets, API keys, credentials, local `.env` files, production data dumps, or confidential mining operational returns.
@@ -62,14 +62,16 @@ Before writing code or submitting contributions, please ensure you:
 
 ## 3. Development Environment
 
+The maintained environment reference is the [setup guide](docs/SETUP.md). Use it for configuration precedence, provider compatibility and troubleshooting.
+
 ### Prerequisites
 
 | Component | Requirement | Description |
 | :--- | :--- | :--- |
-| **Node.js** | `v20.x` LTS (Recommended) | Runtime environment specified in root, client, and server `package.json` (`engines.node: "20.x"`). |
+| **Node.js** | `v24.x` LTS (Required) | Runtime environment specified in root, client, and server `package.json` (`engines.node: "24.x"`). |
 | **Package Manager** | `npm` (v10.x+) | Default package manager bundled with Node.js. |
 | **Database** | MongoDB Atlas or Local MongoDB `v6.0+` | Document database for entities, extracted records, chunks, validation results, and users. |
-| **AI Services** | Google Gemini API Key | Required for LLM reasoning (`gemini-3.6-flash`) and vector embeddings (`gemini-embedding-2`). |
+| **AI Services** | OpenAI-compatible provider endpoint/key | Confirm support for the chat candidates and embedding model used by the current service. |
 | **Operating System** | Windows, Linux, or macOS | Cross-platform development supported. |
 
 ### Repository Setup
@@ -101,11 +103,10 @@ JWT_SECRET=your_secure_development_jwt_secret_key_here
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your_secure_admin_password
 
-# Artificial Intelligence (Google Gemini)
-GEMINI_API_KEY=your_google_gemini_api_key
-# Optional: LLM provider overrides if routing through proxy
-# LLM_API_KEY=your_api_key
-# LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+# Artificial Intelligence (OpenAI-compatible interface)
+LLM_API_KEY=your_provider_api_key
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+GEMINI_MODEL=replace_with_a_supported_chat_model
 
 # Client CORS Origin
 CLIENT_URL=http://localhost:5173
@@ -128,11 +129,14 @@ npm run dev
 ```
 
 #### 4. Verification Scripts
-Verify that your local backend environment and endpoints function properly:
+Start with isolated checks from the repository root; see the [testing guide](docs/TESTING.md) for browser installation, persistence checks and CI:
 ```bash
-# Run the end-to-end API verification suite
-node scratch/run_full_api_verification.js
+npm test --prefix server
+npm test --prefix client
+npm run test:integration --prefix server
 ```
+
+Live scripts in `scratch/` may change database records, create accounts and call external AI services. Inspect them first and use only an approved disposable environment.
 
 ---
 
@@ -141,7 +145,7 @@ node scratch/run_full_api_verification.js
 The MineIntel AI repository is organized as a monorepo containing the frontend client, backend server, verification suites, and API contracts.
 
 ```text
-MineIntel-AI-SIH26023/
+MiniIntel-Ai/
 ├── client/                               # Frontend Single Page Application (React 18 + Vite)
 │   ├── src/
 │   │   ├── api/                          # Centralized Axios API services with JWT interceptors
@@ -172,7 +176,7 @@ MineIntel-AI-SIH26023/
 │   ├── tailwind.config.js                # Tailwind styling theme and enterprise palette
 │   └── vite.config.js                    # Vite bundler configuration
 │
-├── server/                               # Backend REST API Server (Node.js 20.x + Express.js)
+├── server/                               # Backend REST API Server (Node.js 24.x + Express.js)
 │   ├── config/                           # Database connection (db.js) and CORS (cors.js)
 │   ├── controllers/                      # Request handling & HTTP response mapping (16 controllers)
 │   │   ├── documentController.js         # Ingestion, processing status, file download
@@ -217,8 +221,6 @@ MineIntel-AI-SIH26023/
 │
 ├── API_DOCUMENTATION.md                  # Detailed Flutter client integration guide
 ├── openapi.yaml                          # OpenAPI 3.0.3 specification covering all v1 endpoints
-├── API_TEST_REPORT.md                    # Verification test report across 122 scenarios
-├── MineIntel_AI_API_Endpoint_Reference.txt # Master text index of all REST endpoints
 ├── vercel.json                           # Vercel deployment routing configuration
 ├── README.md                             # Primary project documentation
 └── CONTRIBUTING.md                       # This contribution guide
@@ -500,7 +502,7 @@ Documentation is a first-class citizen in MineIntel AI. Whenever code is updated
 
 ### When to Update Documentation:
 - **New Feature / Module**: Document purpose, architectural design, and usage instructions.
-- **New or Modified Endpoints**: Update [openapi.yaml](./openapi.yaml), [API_DOCUMENTATION.md](./API_DOCUMENTATION.md), and [MineIntel_AI_API_Endpoint_Reference.txt](./MineIntel_AI_API_Endpoint_Reference.txt).
+- **New or Modified Endpoints**: Update [openapi.yaml](./openapi.yaml) and [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
 - **Configuration & Environment**: If introducing a new `.env` key, document it in `server/.env.example` (or README) with an explanation and safe default.
 - **Workflow / Policy Changes**: Document any changes to report generation, review procedures, or validation scoring rules.
 
@@ -508,7 +510,6 @@ Documentation is a first-class citizen in MineIntel AI. Whenever code is updated
 - [README.md](./README.md): Main overview, setup instructions, architectural diagram.
 - [API_DOCUMENTATION.md](./API_DOCUMENTATION.md): Comprehensive guide for mobile (Flutter) and REST API consumers.
 - [openapi.yaml](./openapi.yaml): OpenAPI 3.0.3 machine-readable API specification.
-- [API_TEST_REPORT.md](./API_TEST_REPORT.md): Comprehensive 122-scenario verification results.
 
 ---
 

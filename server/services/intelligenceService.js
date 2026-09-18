@@ -4,6 +4,26 @@ const ExtractedRecord = require('../models/ExtractedRecord');
 const DocumentChunk = require('../models/DocumentChunk');
 const llmService = require('./llmService');
 const ragService = require('./ragService');
+const { discoverTextTopics } = require('./topicDiscovery');
+const { documentScope } = require('../utils/documentScope');
+const { discoverTextEntities } = require('./entityDiscovery');
+
+function rebuildTopicTrends(topic) {
+  const trends = new Map();
+  for (const contribution of topic.contributions) {
+    for (const period of new Set(contribution.periods)) {
+      const trend = trends.get(period) || { period, count: 0, weightSum: 0 };
+      trend.count++;
+      trend.weightSum += contribution.weight;
+      trends.set(period, trend);
+    }
+  }
+  topic.trendData = [...trends.values()].sort((first, second) => first.period.localeCompare(second.period))
+    .map(trend => ({ period: trend.period, count: trend.count, avgWeight: trend.weightSum / trend.count }));
+  topic.weight = topic.contributions.length
+    ? topic.contributions.reduce((sum, item) => sum + item.weight, 0) / topic.contributions.length : 0;
+  topic.keywords = [...new Set(topic.contributions.flatMap(item => item.keywords))];
+}
 
 // =============================================
 // 1. NAMED ENTITY RECOGNITION
@@ -12,7 +32,7 @@ exports.extractEntities = async (documentId) => {
   const document = await Document.findById(documentId);
   if (!document || !document.extractedText) return [];
 
-  const text = document.extractedText.substring(0, 5000);
+  const text = document.extractedText;
 
   const systemPrompt = `You are a Named Entity Recognition (NER) engine for mining industry documents.
 Extract all named entities from the provided text.
@@ -29,25 +49,14 @@ Entity types MUST be one of: Mine, Subsidiary, Location, Equipment, Project, Per
 Count how many times each entity appears approximately. Do not invent entities.`;
 
   try {
-    const res = await llmService.callLLM(systemPrompt, `Extract entities:\n${text}`, { format: 'json', reqContext: { isComplex: false } });
-    const entities = Array.isArray(res.entities) ? res.entities : [];
-    
-    // Validate and clean
-    const validTypes = ['Mine', 'Subsidiary', 'Location', 'Equipment', 'Project', 'Person', 'Organization', 'Other'];
-    const cleaned = entities
-      .filter(e => e.name && e.type)
-      .map(e => ({
-        name: e.name,
-        type: validTypes.includes(e.type) ? e.type : 'Other',
-        mentions: Math.max(1, parseInt(e.mentions) || 1)
-      }));
+    const cleaned = await discoverTextEntities(text, llmService.callLLM, systemPrompt);
 
     document.entities = cleaned;
     await document.save();
     return cleaned;
   } catch (err) {
     console.warn('Entity extraction failed:', err.message);
-    return [];
+    throw err;
   }
 };
 
@@ -58,7 +67,7 @@ exports.discoverTopics = async (documentId) => {
   const document = await Document.findById(documentId);
   if (!document || !document.extractedText) return [];
 
-  const text = document.extractedText.substring(0, 5000);
+  const text = document.extractedText;
 
   // Extract period info from records for trend tracking
   const records = await ExtractedRecord.find({ documentId }).lean();
@@ -82,8 +91,7 @@ Rules:
 - keywords should be 3-6 relevant terms.`;
 
   try {
-    const res = await llmService.callLLM(systemPrompt, `Discover topics:\n${text}`, { format: 'json', reqContext: { isComplex: false } });
-    const topicsData = Array.isArray(res.topics) ? res.topics : [];
+    const topicsData = await discoverTextTopics(text, llmService.callLLM, systemPrompt);
 
     const createdTopicIds = [];
 
@@ -97,7 +105,7 @@ Rules:
           name: td.name,
           keywords: td.keywords || [],
           documents: [documentId],
-          weight: td.weight || 1.0
+          weight: td.weight
         });
       } else {
         if (!topic.documents.includes(documentId)) {
@@ -106,19 +114,20 @@ Rules:
         topic.keywords = [...new Set([...topic.keywords, ...(td.keywords || [])])];
       }
 
-      // Update trend data for each period found in the document
-      for (const period of periods) {
-        const existingTrend = topic.trendData.find(t => t.period === period);
-        if (existingTrend) {
-          existingTrend.count += 1;
-          existingTrend.avgWeight = (existingTrend.avgWeight + (td.weight || 1.0)) / 2;
-        } else {
-          topic.trendData.push({ period, count: 1, avgWeight: td.weight || 1.0 });
-        }
-      }
+      topic.contributions = (topic.contributions || []).filter(item => String(item.documentId) !== String(documentId));
+      topic.contributions.push({ documentId, periods, weight: td.weight, keywords: td.keywords });
+      rebuildTopicTrends(topic);
 
       await topic.save();
       createdTopicIds.push(topic._id);
+    }
+
+    const staleTopics = await Topic.find({ documents: documentId, _id: { $nin: createdTopicIds } });
+    for (const topic of staleTopics) {
+      topic.documents = topic.documents.filter(identifier => String(identifier) !== String(documentId));
+      topic.contributions = (topic.contributions || []).filter(item => String(item.documentId) !== String(documentId));
+      rebuildTopicTrends(topic);
+      await topic.save();
     }
 
     // Compute related topics (co-occurrence: topics that share documents)
@@ -146,14 +155,17 @@ Rules:
     return createdTopicIds;
   } catch (err) {
     console.warn('Topic discovery failed:', err.message);
-    return [];
+    throw err;
   }
 };
 
 // =============================================
 // 3. DOCUMENT SIMILARITY (Deterministic)
 // =============================================
-exports.computeDocumentSimilarity = async (documentId) => {
+exports.computeDocumentSimilarity = async (documentId, user) => {
+  const accessible = await Document.find(user ? documentScope(user) : {}).select('_id').lean();
+  const accessibleIds = accessible.map(document => document._id);
+  if (!accessibleIds.some(identifier => String(identifier) === String(documentId))) return [];
   // Get all chunks for target document
   const targetChunks = await DocumentChunk.find({
     documentId,
@@ -177,13 +189,14 @@ exports.computeDocumentSimilarity = async (documentId) => {
 
   // Get all other documents' chunks
   const otherChunks = await DocumentChunk.find({
-    documentId: { $ne: documentId },
+    documentId: { $ne: documentId, $in: accessibleIds },
     embedding: { $exists: true, $ne: [] }
   }).populate('documentId', 'originalName filename').lean();
 
   // Group by document and compute avg embedding
   const docEmbeddings = {};
   for (const chunk of otherChunks) {
+    if (!chunk.documentId) continue;
     const did = String(chunk.documentId._id || chunk.documentId);
     if (!docEmbeddings[did]) {
       docEmbeddings[did] = {
@@ -295,8 +308,9 @@ exports.detectChanges = async (docIdA, docIdB) => {
       });
     } else {
       // Both exist — check if values differ
-      const valsA = inA.map(r => r.value).sort().join(',');
-      const valsB = inB.map(r => r.value).sort().join(',');
+      const fingerprint = record => JSON.stringify([record.value ?? null, record.unit ?? null, record.period ?? null]);
+      const valsA = inA.map(fingerprint).sort().join(',');
+      const valsB = inB.map(fingerprint).sort().join(',');
       if (valsA !== valsB) {
         changes.push({
           type: 'changed',
@@ -324,7 +338,7 @@ exports.detectChanges = async (docIdA, docIdB) => {
 // =============================================
 // 5. CROSS-DOCUMENT EVIDENCE LINKING
 // =============================================
-exports.linkEvidence = async (documentId) => {
+exports.linkEvidence = async (documentId, user) => {
   const records = await ExtractedRecord.find({ documentId });
   if (records.length === 0) return [];
 
@@ -336,7 +350,7 @@ exports.linkEvidence = async (documentId) => {
     const query = `${record.parameter} ${record.value} ${record.unit || ''} ${record.mineName || ''} ${record.period || ''}`.trim();
 
     try {
-      const chunks = await ragService.searchSimilar(query, 3, { isComplex: false });
+      const chunks = await ragService.searchSimilar(query, 3, { user, reqContext: { isComplex: false } });
 
       // Filter out chunks from the same document
       const crossDocChunks = chunks.filter(c => {
@@ -381,12 +395,11 @@ exports.getTopicTrends = async () => {
 // 7. INTELLIGENCE SUMMARY & CROSS-DOC HELPERS
 // =============================================
 exports.getIntelligenceSummary = async (user, filters = {}) => {
-  const docQuery = {};
-  if (user && user.role !== 'admin') docQuery.userId = user._id;
+  const docQuery = documentScope(user);
   if (filters.document) docQuery._id = filters.document;
 
   const docs = await Document.find(docQuery).select('originalName filename entities similarDocuments').lean();
-  const topics = await Topic.find({}).lean();
+  const topics = await Topic.find({ documents: { $in: docs.map(document => document._id) } }).lean();
 
   let totalEntitiesCount = 0;
   docs.forEach(d => {
@@ -403,13 +416,11 @@ exports.getIntelligenceSummary = async (user, filters = {}) => {
 };
 
 exports.getAllEntities = async (user, filters = {}) => {
-  const docQuery = {};
-  if (user && user.role !== 'admin') docQuery.userId = user._id;
+  const docQuery = documentScope(user);
   if (filters.document) docQuery._id = filters.document;
 
   const docs = await Document.find(docQuery).select('originalName entities').lean();
-  const recordQuery = {};
-  if (filters.document) recordQuery.documentId = filters.document;
+  const recordQuery = { documentId: { $in: docs.map(document => document._id) } };
   if (filters.mine) recordQuery.mineName = { $regex: new RegExp(filters.mine, 'i') };
   if (filters.subsidiary) recordQuery.subsidiary = { $regex: new RegExp(filters.subsidiary, 'i') };
 
@@ -487,11 +498,13 @@ exports.getClusters = async (user, filters = {}) => {
 
 exports.getSimilarityMatrix = async (user, filters = {}) => {
   if (filters.document) {
-    const results = await exports.computeDocumentSimilarity(filters.document);
+    const results = await exports.computeDocumentSimilarity(filters.document, user);
     return { documentId: filters.document, similarDocuments: results };
   }
 
-  const docs = await Document.find({ 'similarDocuments.0': { $exists: true } })
+  const accessible = await Document.find(documentScope(user)).select('_id').lean();
+  const accessibleIds = new Set(accessible.map(document => String(document._id)));
+  const docs = await Document.find({ ...documentScope(user), 'similarDocuments.0': { $exists: true } })
     .select('originalName filename similarDocuments')
     .populate('similarDocuments.documentId', 'originalName filename')
     .lean();
@@ -509,7 +522,7 @@ exports.getSimilarityMatrix = async (user, filters = {}) => {
 
     (doc.similarDocuments || []).forEach(sim => {
       const targetId = String(sim.documentId?._id || sim.documentId);
-      if (sim.score && sim.score > 0.4) {
+      if (accessibleIds.has(targetId) && sim.score && sim.score > 0.4) {
         links.push({
           source: dId,
           target: targetId,

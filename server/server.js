@@ -11,6 +11,8 @@ require('dotenv').config({
   path: path.resolve(__dirname, '../.env'),
 });
 
+require('./config/jwt').getJwtSecret();
+
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
@@ -40,8 +42,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Environment-aware uploads directory
-const baseDir = process.env.VERCEL ? '/tmp' : __dirname;
-const uploadsDir = path.join(baseDir, 'uploads');
+const uploadsDir = require('./config/storage').getUploadDir();
 
 // Create uploads directory only when writable
 if (!process.env.VERCEL) {
@@ -74,9 +75,6 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(apiResponseMiddleware);
 app.use(morgan('dev'));
-
-// Static folder for uploads
-app.use('/uploads', express.static(uploadsDir));
 
 // Versioned API Layer (v1)
 app.use('/api/v1', require('./routes/api/v1'));
