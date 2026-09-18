@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const ExtractedRecord = require('../models/ExtractedRecord');
 const Document = require('../models/Document');
 const DocumentPage = require('../models/DocumentPage');
@@ -108,24 +109,6 @@ exports.extractFromDocument = async (documentId) => {
     // --------------------------------------------------
     // 4. Prevent duplicate extraction
     // --------------------------------------------------
-
-    const existingRecords = await ExtractedRecord.countDocuments({
-      documentId
-    });
-
-    if (existingRecords > 0) {
-      console.log(
-        `Existing extracted records found: ${existingRecords}`
-      );
-
-      console.log(
-        'Deleting old extracted records before re-extraction...'
-      );
-
-      await ExtractedRecord.deleteMany({
-        documentId
-      });
-    }
 
     // --------------------------------------------------
     // 5. LLM prompt
@@ -280,7 +263,7 @@ ${cellEvidencePrompt(page)}
         const mineName = cleanValue(record.mineName || record.mine);
         const subsidiary = cleanValue(record.subsidiary || record.company);
         
-        let confidence = Number(record.confidenceScore || record.confidence);
+        let confidence = Number(record.confidenceScore ?? record.confidence);
 
         if (Number.isNaN(confidence)) {
           confidence = 0.75;
@@ -311,12 +294,12 @@ ${cellEvidencePrompt(page)}
           status: 'pending'
         });
 
-        await extractedRecord.save();
+        await extractedRecord.validate();
 
         extractedRecords.push(extractedRecord);
 
         console.log(
-          'Saved extracted record:',
+          'Prepared extracted record:',
           parameter,
           '| value:',
           record.value,
@@ -330,8 +313,18 @@ ${cellEvidencePrompt(page)}
     // 10. Update document status
     // --------------------------------------------------
 
-    document.status = 'extracted';
-    await document.save();
+    if (extractedRecords.length === 0) {
+      throw new Error(`The AI processed ${pagesWithContent.length} page(s) but could not find any measurable mining data to extract.`);
+    }
+
+    await mongoose.connection.transaction(async session => {
+      await ExtractedRecord.deleteMany({ documentId }, { session });
+      for (const extractedRecord of extractedRecords) {
+        await extractedRecord.save({ session });
+      }
+      document.status = 'extracted';
+      await document.save({ session });
+    });
 
     // --------------------------------------------------
     // 11. Final logs
@@ -342,10 +335,6 @@ ${cellEvidencePrompt(page)}
     console.log('extractedRecords.length:', extractedRecords.length);
     console.log('saved record IDs:', extractedRecords.map(r => r._id));
     console.log('====================================');
-
-    if (extractedRecords.length === 0) {
-      throw new Error(`The AI processed ${pagesWithContent.length} page(s) but could not find any measurable mining data to extract.`);
-    }
 
     return extractedRecords;
 

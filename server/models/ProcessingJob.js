@@ -4,8 +4,7 @@ const processingJobSchema = new mongoose.Schema({
   documentId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Document', 
-    required: true, 
-    index: true 
+    required: true
   },
   status: { 
     type: String, 
@@ -24,7 +23,13 @@ const processingJobSchema = new mongoose.Schema({
   }],
   startedAt: Date,
   completedAt: Date,
+  leaseToken: String,
+  leaseUntil: Date,
+  attempts: { type: Number, default: 0, min: 0 },
   error: { type: String, default: '' }
 });
+
+processingJobSchema.index({ documentId: 1 }, { unique: true, name: 'processing_document_unique' });
+processingJobSchema.index({ status: 1, leaseUntil: 1 });
 
 module.exports = mongoose.model('ProcessingJob', processingJobSchema);

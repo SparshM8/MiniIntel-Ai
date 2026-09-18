@@ -3,13 +3,13 @@
 ## Prerequisites
 
 - Node.js 24.x LTS is required by all package manifests and CI. Office parser 8 requires a modern runtime; Node 20 is no longer supported by this project.
-- npm, Git, an approved MongoDB instance, and an OpenAI-compatible AI provider endpoint with usable chat and embedding models.
+- npm, Git, an approved MongoDB replica set (or Atlas cluster), and an OpenAI-compatible AI provider endpoint with usable chat and embedding models. Transaction support is required for document upload and processing.
 - Internet access for initial dependency, browser, MongoDB-test-binary and OCR language-data downloads as applicable.
 
 Run commands from the repository root. On Windows use `npm.cmd` if PowerShell blocks `npm.ps1`.
 
 ```sh
-npm ci --prefix server --ignore-scripts --no-audit --no-fund
+npm ci --prefix server --no-audit --no-fund
 npm ci --prefix client --ignore-scripts --no-audit --no-fund
 ```
 
@@ -22,7 +22,7 @@ Create a private `server/.env` with your own values; do not commit it or share s
 ```dotenv
 PORT=5000
 NODE_ENV=development
-MONGODB_URI=mongodb://127.0.0.1:27017/mineintel_dev
+MONGODB_URI=mongodb://127.0.0.1:27017/mineintel_dev?replicaSet=rs0
 JWT_SECRET=replace-with-a-long-random-private-secret
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-a-unique-private-password
@@ -32,7 +32,7 @@ GEMINI_MODEL=replace-with-a-chat-model-your-provider-supports
 CLIENT_URL=http://localhost:5173
 ```
 
-The provider URL is an example for Gemini's OpenAI-compatible interface, not a verified deployment configuration. Confirm model availability and quotas with the provider.
+The MongoDB URI assumes a local replica set already initialized as `rs0`; adding the query parameter does not initialize one. Use your approved Atlas URI instead when appropriate. The provider URL is an example for Gemini's OpenAI-compatible interface, not a verified deployment configuration. Confirm model availability and quotas with the provider.
 
 | Variable | Actual usage |
 | --- | --- |
@@ -62,6 +62,14 @@ In another:
 ```sh
 npm run dev --prefix client
 ```
+
+In a third terminal, with the same database, upload directory and AI settings as the server:
+
+```sh
+npm run worker --prefix server
+```
+
+Without this worker, uploads remain queued. Run it on a persistent Node host, not a Vercel function. See [deployment](DEPLOYMENT.md) for index preflight, legacy-job rollout and recovery limitations.
 
 Open `http://localhost:5173`. Vite proxies `/api` and `/uploads` to `http://localhost:5000`. Changing the backend port also requires updating the proxy or configuring the client API URL.
 

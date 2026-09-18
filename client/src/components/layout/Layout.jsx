@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Header from './Header';
 import Sidebar from './Sidebar';
@@ -26,7 +26,9 @@ const Layout = () => {
         }`}
       >
         <div className="max-w-[1400px] mx-auto">
-          <Outlet />
+          <Suspense fallback={<div role="status" className="min-h-48 p-6 text-neutral-500">Loading...</div>}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 

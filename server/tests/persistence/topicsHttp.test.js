@@ -197,21 +197,34 @@ test('cached RAG evidence follows current owner/reviewer scope and fails closed 
 test('report generation retrieves scoped evidence and exports honest metrics', async () => {
   const reports = require('../../services/reportService');
   const llm = require('../../services/llmService');
+  const rag = require('../../services/ragService');
+  const originalSearch = rag.searchSimilar;
   const originalCall = llm.callLLM;
   const originalEmbedding = llm.generateEmbedding;
   const originalKey = process.env.LLM_API_KEY;
   try {
-    delete process.env.LLM_API_KEY;
+    process.env.LLM_API_KEY = 'mock-key-for-testing';
     llm.generateEmbedding = async () => [1, 0];
     llm.callLLM = async () => '# Evidence Report\n\nOwner Mine coal was present in the retrieved document. No production quantities were independently verified.';
     const report = await reports.generateReport({ title: 'Evidence Report', documentId: document.id }, 'production', owner._id);
+    assert.equal(report.content.markdown, await llm.callLLM());
+    assert.doesNotMatch(report.content.markdown, /4\.2 MT|verified operational logs/);
     assert.ok(report.content.sources.length > 0);
     assert.equal(report.metricBasis, 'retrieval-similarity-v1');
     const exported = await reports.exportReport(report.id, 'md');
     assert.match(exported.data, /Retrieval similarity/);
     assert.match(exported.data, /Accuracy not evaluated/);
     assert.doesNotMatch(exported.data, /Evidence Coverage|Confidence Score/);
+    for (const score of [0, undefined, 2]) {
+      rag.searchSimilar = async () => [{ documentId: document, pageNumber: 1,
+        content: 'Owner Mine coal', similarityScore: score }];
+      const scored = await reports.generateReport({ title: 'Score Report', documentId: document.id }, 'production', owner._id);
+      assert.equal(scored.content.sources[0].similarity, score === 0 ? 0 : null);
+      const markdown = await reports.exportReport(scored.id, 'md');
+      assert.match(markdown.data, score === 0 ? /Retrieval similarity: 0%/ : /Retrieval similarity: N\/A/);
+    }
   } finally {
+    rag.searchSimilar = originalSearch;
     llm.callLLM = originalCall;
     llm.generateEmbedding = originalEmbedding;
     if (originalKey === undefined) delete process.env.LLM_API_KEY; else process.env.LLM_API_KEY = originalKey;
