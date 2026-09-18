@@ -14,7 +14,7 @@ const DocumentPage = require('../../../models/DocumentPage');
 const DocumentChunk = require('../../../models/DocumentChunk');
 const ProcessingJob = require('../../../models/ProcessingJob');
 const ExtractedRecord = require('../../../models/ExtractedRecord');
-const { processDocument } = require('../../../services/processingService');
+const { saveQueuedDocument, requeueDocument } = require('../../../services/processingQueue');
 const auditService = require('../../../services/auditService');
 const validationController = require('../../../controllers/validationController');
 const { sendSuccess, sendError } = require('../../../utils/apiResponse');
@@ -79,16 +79,7 @@ router.post('/upload', authenticate, upload.single('file'), async (req, res, nex
       userId: req.user._id
     });
 
-    await document.save();
-
-    const job = new ProcessingJob({
-      documentId: document._id,
-      status: 'queued'
-    });
-    await job.save();
-
-    // Fire and forget background ingestion pipeline
-    processDocument(document._id);
+    await saveQueuedDocument(document);
 
     return sendSuccess(res, document, 'Document uploaded successfully and queued for processing', 201);
   } catch (error) {
@@ -409,21 +400,11 @@ router.post('/:id/reprocess', authenticate, async (req, res, next) => {
 
     document.status = 'pending';
     document.error = '';
-    await document.save();
-
-    await ProcessingJob.deleteMany({ documentId: document._id });
-
-    const job = new ProcessingJob({
-      documentId: document._id,
-      status: 'queued'
-    });
-    await job.save();
-
-    // Trigger async processing pipeline
-    processDocument(document._id);
+    await requeueDocument(document._id);
 
     return sendSuccess(res, document, 'Document queued for reprocessing');
   } catch (error) {
+    if (error.statusCode === 409) return sendError(res, error.message, 'PROCESSING_IN_PROGRESS', 409);
     next(error);
   }
 });

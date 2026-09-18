@@ -1,33 +1,33 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import Layout from './components/layout/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
-import Login from './pages/Login';
-import AdminLogin from './pages/AdminLogin';
-import AdminDashboard from './pages/AdminDashboard';
-import Dashboard from './pages/Dashboard';
-import CommandCenter from './pages/CommandCenter';
-import ExtractionReview from './pages/ExtractionReview';
-import ValidationDashboard from './pages/ValidationDashboard';
-import KnowledgeBase from './pages/KnowledgeBase';
-import AIAssistant from './pages/AIAssistant';
-import AnalyticsDashboard from './pages/AnalyticsDashboard';
-import TopicsExplorer from './pages/TopicsExplorer';
-import ReportGenerator from './pages/ReportGenerator';
-import AuditTrail from './pages/AuditTrail';
-import AdminUsers from './pages/AdminUsers';
-import SystemHealth from './pages/SystemHealth';
-import IntelligenceDashboard from './pages/IntelligenceDashboard';
-import AdminPendingReviews from './pages/AdminPendingReviews';
-import ReconciliationReview from './pages/ReconciliationReview';
-import Settings from './pages/Settings';
-import HelpSupport from './pages/HelpSupport';
+const Login = lazy(() => import('./pages/Login'));
+const AdminLogin = lazy(() => import('./pages/AdminLogin'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const CommandCenter = lazy(() => import('./pages/CommandCenter'));
+const ExtractionReview = lazy(() => import('./pages/ExtractionReview'));
+const ValidationDashboard = lazy(() => import('./pages/ValidationDashboard'));
+const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'));
+const AIAssistant = lazy(() => import('./pages/AIAssistant'));
+const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard'));
+const TopicsExplorer = lazy(() => import('./pages/TopicsExplorer'));
+const ReportGenerator = lazy(() => import('./pages/ReportGenerator'));
+const AuditTrail = lazy(() => import('./pages/AuditTrail'));
+const AdminUsers = lazy(() => import('./pages/AdminUsers'));
+const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+const IntelligenceDashboard = lazy(() => import('./pages/IntelligenceDashboard'));
+const AdminPendingReviews = lazy(() => import('./pages/AdminPendingReviews'));
+const ReconciliationReview = lazy(() => import('./pages/ReconciliationReview'));
+const Settings = lazy(() => import('./pages/Settings'));
+const HelpSupport = lazy(() => import('./pages/HelpSupport'));
 
 import { LanguageProvider } from './context/LanguageContext';
 
-import Landing from './pages/Landing';
+const Landing = lazy(() => import('./pages/Landing'));
 
 function App() {
   return (
@@ -36,6 +36,7 @@ function App() {
         <AuthProvider>
           <div className="min-h-screen bg-light-bg dark:bg-dark-bg transition-colors duration-200">
             <BrowserRouter>
+              <Suspense fallback={<div role="status" className="p-6 text-neutral-500">Loading...</div>}>
               <Routes>
                 {/* Public Landing & Auth Routes */}
                 <Route path="/" element={<Landing />} />
@@ -73,6 +74,7 @@ function App() {
                   </Route>
                 </Route>
               </Routes>
+              </Suspense>
             </BrowserRouter>
           </div>
         </AuthProvider>

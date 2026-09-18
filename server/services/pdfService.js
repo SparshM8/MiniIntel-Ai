@@ -1,8 +1,8 @@
 const fs = require('fs');
-const pdfParse = require('pdf-parse-new');
+const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads');
 
-const extractPdfText = async (filePath) => {
-  const dataBuffer = fs.readFileSync(filePath);
+const parsePdf = async (dataBuffer) => {
+  const pdfParse = require('pdf-parse-new');
   
   function render_page(pageData) {
       let render_options = {
@@ -28,11 +28,6 @@ const extractPdfText = async (filePath) => {
     const data = await pdfParse(dataBuffer, { pagerender: render_page });
     const text = data.text;
     
-    // Scanned PDFs or images saved as PDF usually return very little text
-    if (!text || text.trim().length < 10) {
-      return { pages: [], needsOcr: true };
-    }
-    
     // pdfParse concatenates results with \n by default, and we added <<PAGE_BREAK>>
     const rawPages = text.split('<<PAGE_BREAK>>');
     const pages = [];
@@ -48,6 +43,9 @@ const extractPdfText = async (filePath) => {
       }
     });
 
+    if (pages.map(page => page.content).join('\n').trim().length < 10) {
+      return { pages: [], needsOcr: true };
+    }
     return { pages, needsOcr: false };
   } catch (error) {
     console.error("PDF Parsing error:", error.message);
@@ -56,5 +54,25 @@ const extractPdfText = async (filePath) => {
     return { pages: [], needsOcr: true };
   }
 };
+
+const extractPdfText = async (filePath) => {
+  const dataBuffer = fs.readFileSync(filePath);
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(__filename, { workerData: { pdfBuffer: dataBuffer } });
+    let result;
+    let failure;
+    worker.once('message', message => { result = message; });
+    worker.once('error', error => { failure = error; });
+    worker.once('exit', code => {
+      if (failure) return reject(failure);
+      if (code !== 0 || !result) return reject(new Error('PDF parser worker exited without a result'));
+      resolve(result);
+    });
+  });
+};
+
+if (!isMainThread && workerData?.pdfBuffer) {
+  parsePdf(Buffer.from(workerData.pdfBuffer)).then(result => parentPort.postMessage(result));
+}
 
 module.exports = { extractPdfText };

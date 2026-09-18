@@ -299,14 +299,10 @@ ${boundedFullContext}`;
   // 4. Gemini Generation with Safe Error Handling
   let reportContent = '';
   try {
-    if (process.env.LLM_API_KEY === 'mock-key-for-testing') {
-      reportContent = `# ${reportMainTitle}\n\n## 1. Executive Summary\nProduction operations summary based on available mining records.\n\n## 2. Key Operational Metrics\n| Metric | Period | Actual | Target | Variance | Status |\n| --- | --- | --- | --- | --- | --- |\n| Coal Production | ${period || 'FY 2023-24'} | 4.2 MT | 4.0 MT | +5.0% | On Track |\n\n## 3. Detailed Operational Analysis\nProduction achieved target specifications across key seams.\n\n## 4. Variance & Trend Analysis\nPositive variance recorded in primary excavation.\n\n## 5. Operational Risks & Constraints\nLogistical dispatch constraints noted during peak periods.\n\n${includeRecommendations ? '## 6. Strategic Recommendations\n1. Optimize haulage dispatch fleet cycles.\n\n' : ''}${includeAppendix ? '## Evidence Appendix & Citations\nAll data grounded in verified operational logs.' : ''}`;
-    } else {
-      reportContent = await llmService.callLLM(systemPrompt, 'Generate the complete professional report using the verified evidence.', {
-        reqContext,
-        throwOnLimit: true
-      });
-    }
+    reportContent = await llmService.callLLM(systemPrompt, 'Generate the complete professional report using the supplied evidence.', {
+      reqContext,
+      throwOnLimit: true
+    });
   } catch (err) {
     console.error('[Report Generation Service Error]', err.message);
     const is503 = err.code === 'AI_SERVICE_UNAVAILABLE' || err.statusCode === 503 || err.status === 503 || (err.message && (
@@ -372,7 +368,8 @@ ${boundedFullContext}`;
         documentId: c.documentId?._id || c.documentId,
         documentName: c.documentId?.originalName || c.documentId?.filename || c.documentName || 'Mining Report Document',
         pageNumber: c.pageNumber != null ? c.pageNumber : null,
-        similarity: c.similarityScore || 0.85,
+        similarity: Number.isFinite(c.similarityScore) && c.similarityScore >= -1 && c.similarityScore <= 1
+          ? c.similarityScore : null,
         excerpt: (c.content || '').replace(/\s+/g, ' ').substring(0, 200)
       }))
     },

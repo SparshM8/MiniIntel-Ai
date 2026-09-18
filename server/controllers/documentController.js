@@ -5,7 +5,7 @@ const { getUploadPath } = require('../config/storage');
 const Document = require('../models/Document');
 const DocumentPage = require('../models/DocumentPage');
 const ProcessingJob = require('../models/ProcessingJob');
-const { processDocument } = require('../services/processingService');
+const { saveQueuedDocument, requeueDocument } = require('../services/processingQueue');
 
 const getFileType = (mimetype) => {
   if (mimetype === 'application/pdf') return 'pdf';
@@ -53,16 +53,7 @@ const uploadDocument = async (req, res) => {
       userId: req.user._id
     });
 
-    await document.save();
-
-    const job = new ProcessingJob({
-      documentId: document._id,
-      status: 'queued'
-    });
-    await job.save();
-
-    // Fire and forget
-    processDocument(document._id);
+    await saveQueuedDocument(document);
 
     res.status(201).json(document);
   } catch (error) {
@@ -101,12 +92,7 @@ const uploadBatch = async (req, res) => {
           hash: fileHash,
           userId: req.user._id
         });
-        await document.save();
-
-        const job = new ProcessingJob({ documentId: document._id, status: 'queued' });
-        await job.save();
-
-        processDocument(document._id);
+        await saveQueuedDocument(document);
         results.push({ filename: file.originalname, status: 'success', document });
       } catch (err) {
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
@@ -226,18 +212,7 @@ const retryDocument = async (req, res) => {
 
     document.status = 'pending';
     document.error = '';
-    await document.save();
-
-    await ProcessingJob.deleteMany({ documentId: document._id });
-    
-    const job = new ProcessingJob({
-      documentId: document._id,
-      status: 'queued'
-    });
-    await job.save();
-
-    // Fire and forget
-    processDocument(document._id);
+    await requeueDocument(document._id);
 
     res.status(200).json(document);
   } catch (error) {
