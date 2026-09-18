@@ -44,6 +44,85 @@ test('task errors and exits without a result reject promptly', async () => {
   }
 });
 
+test('explicit parser failure preserves its cause and terminates the worker', async () => {
+  const worker = new Worker(`
+    const { parentPort } = require('node:worker_threads');
+    parentPort.on('message', () => {});
+    parentPort.postMessage({ type: 'failure', error: 'OCR language data unavailable' });
+  `, { eval: true });
+  await assert.rejects(runTask(worker, { timeoutMs: 5000 }), {
+    message: 'OCR language data unavailable'
+  });
+  assert.equal(worker.threadId, -1);
+});
+
+test('progress acknowledgement waits for persistence and preserves the message id', { timeout: 10000 }, async () => {
+  const worker = new Worker(`
+    const { parentPort } = require('node:worker_threads');
+    parentPort.once('message', message => {
+      parentPort.postMessage({ type: 'result', result: message });
+    });
+    parentPort.postMessage({ type: 'progress', id: 42, step: 'Reading', progress: 20 });
+  `, { eval: true });
+  const started = Promise.withResolvers();
+  const persisted = Promise.withResolvers();
+  const acknowledgements = [];
+  const postMessage = worker.postMessage.bind(worker);
+  worker.postMessage = message => {
+    acknowledgements.push(message);
+    postMessage(message);
+  };
+  const task = runTask(worker, { timeoutMs: 5000, onProgress: async () => {
+    started.resolve();
+    await persisted.promise;
+  } });
+  try {
+    await Promise.race([started.promise, task]);
+    assert.deepEqual(acknowledgements, []);
+    persisted.resolve();
+    assert.deepEqual(await task, { type: 'ack', id: 42 });
+    assert.deepEqual(acknowledgements, [{ type: 'ack', id: 42 }]);
+    assert.equal(worker.threadId, -1);
+  } finally {
+    persisted.resolve();
+    await worker.terminate();
+    await task.catch(() => {});
+  }
+});
+
+for (const completion of ['resolve', 'reject']) {
+  test(`deadline terminates pending progress and ignores its late ${completion}`, { timeout: 10000 }, async () => {
+    const worker = new Worker(`
+      const { parentPort } = require('node:worker_threads');
+      parentPort.on('message', () => {});
+      parentPort.postMessage({ type: 'progress', id: 42 });
+    `, { eval: true });
+    const started = Promise.withResolvers();
+    const persisted = Promise.withResolvers();
+    const acknowledgements = [];
+    worker.postMessage = message => acknowledgements.push(message);
+    const task = runTask(worker, { timeoutMs: 1500, onProgress: async () => {
+      started.resolve();
+      await persisted.promise;
+    } });
+    const rejected = assert.rejects(task, /deadline/);
+    try {
+      await Promise.race([started.promise, task]);
+      await rejected;
+      assert.equal(worker.threadId, -1);
+      if (completion === 'resolve') persisted.resolve();
+      else persisted.reject(new Error('Late database failure'));
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(acknowledgements, []);
+      await assert.rejects(task, /deadline/);
+    } finally {
+      persisted.resolve();
+      await worker.terminate();
+      await rejected;
+    }
+  });
+}
+
 test('processing timeout is bounded and invalid configuration fails closed', () => {
   const previous = process.env.PROCESSING_TIMEOUT_MS;
   try {
