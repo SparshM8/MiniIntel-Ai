@@ -1,4 +1,5 @@
 const Report = require('../models/Report');
+const User = require('../models/User');
 const reportService = require('../services/reportService');
 const auditService = require('../services/auditService');
 const notificationService = require('../services/notificationService');
@@ -144,7 +145,7 @@ exports.updateReport = async (req, res, next) => {
 
     // Snapshot version before updating
     report.previousVersions.push({
-      content: report.content,
+      content: report.toObject().content,
       version: report.version || 1,
       date: new Date()
     });
@@ -155,12 +156,10 @@ exports.updateReport = async (req, res, next) => {
     }
 
     if (markdown !== undefined) {
-      report.content = report.content || {};
-      report.content.markdown = markdown;
+      report.content = { ...report.content, markdown };
     } else if (content !== undefined) {
       if (typeof content === 'string') {
-        report.content = report.content || {};
-        report.content.markdown = content;
+        report.content = { ...report.content, markdown: content };
       } else if (typeof content === 'object') {
         report.content = {
           ...report.content,
@@ -173,10 +172,11 @@ exports.updateReport = async (req, res, next) => {
       report.language = language;
     }
 
-    // If report was rejected, updating it moves it back to draft
-    if (report.status === 'rejected') {
-      report.status = 'draft';
-    }
+    report.status = 'draft';
+    report.approvedBy = undefined;
+    report.approvedAt = undefined;
+    report.reviewedAt = undefined;
+    report.reviewerComments = '';
 
     await report.save();
 
@@ -241,11 +241,22 @@ exports.submitForReview = async (req, res, next) => {
       return sendError(res, 'Report not found', 'NOT_FOUND', 404);
     }
 
+    if (req.user.role !== 'admin' && report.generatedBy?.toString() !== req.user._id.toString()) {
+      return sendError(res, 'Not authorized to submit this report', 'FORBIDDEN', 403);
+    }
+
     if (report.status !== 'draft' && report.status !== 'rejected') {
       return sendError(res, `Cannot submit a report with status "${report.status}"`, 'INVALID_STATUS', 400);
     }
 
-    const { reviewerId } = req.body;
+    const reviewerId = req.body?.reviewerId === undefined ? report.reviewerId?.toString() : req.body.reviewerId;
+    if (reviewerId !== undefined) {
+      if (typeof reviewerId !== 'string' || !/^[a-fA-F0-9]{24}$/.test(reviewerId) ||
+          !await User.exists({ _id: reviewerId, role: 'reviewer', status: 'active' })) {
+        return sendError(res, 'An active reviewer ID is required', 'INVALID_REVIEWER', 400);
+      }
+    }
+    const previousStatus = report.status;
     report.status = 'review';
     if (reviewerId) report.reviewerId = reviewerId;
     await report.save();
@@ -256,7 +267,7 @@ exports.submitForReview = async (req, res, next) => {
         action: 'SUBMIT_FOR_REVIEW',
         resource: 'Report',
         resourceId: report._id,
-        details: { reviewerId, previousStatus: report.status }
+        details: { reviewerId, previousStatus }
       });
     } catch (auditErr) {
       console.warn('Audit logging failed:', auditErr.message);
@@ -264,13 +275,13 @@ exports.submitForReview = async (req, res, next) => {
 
     try {
       if (reviewerId) {
-        notificationService.notify(
+        await notificationService.notify(
           reviewerId,
           `Report "${report.title}" has been submitted for your review.`,
           'action', 'review', report._id
         );
       } else {
-        notificationService.notifyAdmins(
+        await notificationService.notifyAdmins(
           `Report "${report.title}" is awaiting review.`,
           'action', 'review', report._id
         );

@@ -10,6 +10,14 @@
 
 ## 1. Flutter Integration & Environment Setup
 
+### Report Revision Updates
+
+`PUT /api/v1/reports/:id` retains the existing creator/admin authorization. Every successful update increments the report version, preserves the previous content in `previousVersions`, and returns the current report as `draft`, including edits to reports previously in review or approved. Approval identity/date and previous review date/comments are cleared; the assigned reviewer remains. Clients must use the returned status and submit the revision for review again before approval.
+
+`POST /api/v1/reports/:id/submit-review` and its `PUT /api/v1/reports/:id/submit` alias require the report creator or an admin. Other authenticated actors receive `403 FORBIDDEN`. Only draft/rejected reports can be submitted; other states return `400 INVALID_STATUS`. Optional `reviewerId` must be a 24-character hexadecimal ID belonging to an active reviewer; null, malformed, missing-account, inactive, and wrong-role selections return `400 INVALID_REVIEWER`. Omitting the field preserves and revalidates an existing assignment. A body-less request remains supported; reports without an assignment use the existing administrative notification path. The submission audit records the actual prior status.
+
+This change does not provide immutable release artifacts, complete historical approval metadata, optimistic concurrency for report decisions, source snapshots, or draft export markings. Those remain separate report workflow requirements. Regression tests exercise revisions and both submission HTTP aliases with isolated MongoDB, real JWT authentication, and audit/notification assertions. They are included automatically in the persistence CI suite; they do not certify the full approval/export workflow.
+
 ### Reviewer Reconciliation Queue
 
 `GET /api/v1/reconciliations/queue` requires a reviewer/admin JWT. Reviewers receive only records belonging to owned or explicitly assigned documents; admins receive records for all existing documents.
