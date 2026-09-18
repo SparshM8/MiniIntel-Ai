@@ -35,6 +35,58 @@ async function listReconciliations({ documentId, actor }, dependencies = {}) {
   await authorizeDocument(documentId, actor, DocumentModel);
   return RecordModel.find({ documentId }).sort({ createdAt: -1 });
 }
+async function listReviewQueue({ actor, query = {} }, dependencies = {}) {
+  const id = actorId(actor);
+  if (!id) throw serviceError('AUTH_REQUIRED', 401, 'Authenticated actor is required.');
+  if (!['reviewer', 'admin'].includes(actor.role)) throw serviceError('FORBIDDEN_ROLE', 403, 'Reviewer role is required.');
+  const invalid = () => serviceError('INVALID_QUEUE_FILTER', 400, 'Invalid review queue filters.');
+  const allowed = ['page', 'limit', 'documentId', 'reviewState', 'outcome', 'caseId'];
+  if (Object.keys(query).some(key => !allowed.includes(key) || typeof query[key] !== 'string')) throw invalid();
+  const integer = (value, fallback, maximum) => {
+    if (value === undefined) return fallback;
+    if (!/^[1-9]\d*$/.test(value) || Number(value) > maximum) throw invalid();
+    return Number(value);
+  };
+  const page = integer(query.page, 1, 1000000);
+  const limit = integer(query.limit, 20, 100);
+  const filter = {};
+  if (query.documentId !== undefined) {
+    if (!/^[a-f\d]{24}$/i.test(query.documentId)) throw invalid();
+    filter.documentId = new mongoose.Types.ObjectId(query.documentId);
+  }
+  if (query.reviewState !== undefined) {
+    if (!['pending', ...Object.values(REVIEW_STATES)].includes(query.reviewState)) throw invalid();
+    filter.reviewState = query.reviewState;
+  }
+  if (query.outcome !== undefined) {
+    if (!['matched', 'converted', 'conflict', 'incompatible', 'insufficient_evidence'].includes(query.outcome)) throw invalid();
+    filter.outcome = query.outcome;
+  }
+  if (query.caseId !== undefined) {
+    if (!query.caseId.trim() || query.caseId.length > 200) throw invalid();
+    filter.caseId = query.caseId.trim();
+  }
+  const DocumentModel = dependencies.DocumentModel || Document;
+  const RecordModel = dependencies.RecordModel || ReconciliationRecord;
+  const access = actor.role === 'admin' ? {} : { $or: [
+    { 'document.userId': new mongoose.Types.ObjectId(id) },
+    { 'document.reviewerIds': new mongoose.Types.ObjectId(id) }
+  ] };
+  const [result] = await RecordModel.aggregate([
+    { $match: filter },
+    { $lookup: { from: DocumentModel.collection.name, localField: 'documentId', foreignField: '_id', as: 'document' } },
+    { $unwind: '$document' },
+    { $match: access },
+    { $facet: {
+      records: [{ $sort: { createdAt: -1, _id: -1 } }, { $skip: (page - 1) * limit }, { $limit: limit },
+        { $addFields: { documentName: '$document.originalName' } },
+        { $project: { document: 0, caseSnapshot: 0, decisions: 0 } }],
+      count: [{ $count: 'total' }]
+    } }
+  ]).option({ maxTimeMS: 10000 });
+  const total = result.count[0]?.total || 0;
+  return { records: result.records, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
+}
 async function getReconciliation({ recordId, actor }, dependencies = {}) {
   const RecordModel = dependencies.RecordModel || ReconciliationRecord;
   if (!actorId(actor)) throw serviceError('AUTH_REQUIRED', 401, 'Authenticated actor is required.');
@@ -110,6 +162,7 @@ module.exports = {
   payloadHash,
   authorizeDocument,
   listReconciliations,
+  listReviewQueue,
   getReconciliation,
   createReconciliation,
   appendDecision

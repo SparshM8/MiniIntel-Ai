@@ -79,8 +79,8 @@ export const documentApi = {
    * @param {string} id
    * @param {string[]} reviewerIds
    */
-  assignReviewers: async (id, reviewerIds, config = {}) => {
-    const response = await apiClient.put(`/documents/${id}/reviewers`, { reviewerIds }, config);
+  assignReviewers: async (id, reviewerIds, assignmentVersion, config = {}) => {
+    const response = await apiClient.put(`/documents/${id}/reviewers`, { reviewerIds, assignmentVersion }, config);
     return response.data;
   },
 

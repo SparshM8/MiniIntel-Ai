@@ -16,6 +16,7 @@ export default function ReviewerAssignmentDialog({ document, onClose }) {
   const [choices, setChoices] = useState([]);
   const [selected, setSelected] = useState([]);
   const [baseline, setBaseline] = useState([]);
+  const [assignmentVersion, setAssignmentVersion] = useState(null);
   const [search, setSearch] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -40,6 +41,7 @@ export default function ReviewerAssignmentDialog({ document, onClose }) {
       setChoices(result.choices);
       setSelected(result.selected);
       setBaseline(result.selected);
+      setAssignmentVersion(result.assignmentVersion);
       setSearch('');
       setReady(true);
     } catch (err) {
@@ -97,16 +99,21 @@ export default function ReviewerAssignmentDialog({ document, onClose }) {
     request.current = controller;
     try {
       const requested = assignmentIds(selected);
-      const response = await documentApi.assignReviewers(documentId, requested, { signal: controller.signal, timeout: 30000 });
+      const response = await documentApi.assignReviewers(documentId, requested, assignmentVersion, { signal: controller.signal, timeout: 30000 });
       if (generation.current !== current) return;
-      const saved = confirmAssignmentSave(response, documentId, requested);
+      const saved = confirmAssignmentSave(response, documentId, requested, assignmentVersion);
       setSelected(saved);
       setBaseline(saved);
+      setAssignmentVersion(response.data.assignmentVersion);
       setMessage(saved.length ? `Reviewer assignments saved (${saved.length}).` : 'All reviewer assignments removed.');
     } catch (err) {
       if (generation.current !== current) return;
       setReady(false);
-      setError(`Save not confirmed. ${err.response?.data?.message || err.message || 'Request failed.'} The server may have applied changes. Reload assignments before saving again.`);
+      if (err.response?.status === 409 && err.response?.data?.error === 'ASSIGNMENT_CONFLICT') {
+        setError('Reviewer assignments changed since you loaded them. Your changes were not saved. Reload assignments before saving again.');
+      } else {
+        setError(`Save not confirmed. ${err.response?.data?.message || err.message || 'Request failed.'} The server may have applied changes. Reload assignments before saving again.`);
+      }
     } finally {
       saving.current = false;
       if (generation.current === current) setPending(false);

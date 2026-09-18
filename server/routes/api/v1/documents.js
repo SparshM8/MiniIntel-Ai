@@ -172,13 +172,25 @@ router.put('/:id/reviewers', authenticate, authorize('admin'), async (req, res, 
     if (reviewers.length !== uniqueIds.length) {
       return sendError(res, 'Every assignment must identify an active reviewer', 'INVALID_REVIEWERS', 400);
     }
-    const document = await Document.findById(req.params.id);
-        if (!document) return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
-    document.reviewerIds = uniqueIds;
-    await document.save();
+    const assignmentVersion = req.body.assignmentVersion;
+    if (!Number.isSafeInteger(assignmentVersion) || assignmentVersion < 0 || assignmentVersion >= Number.MAX_SAFE_INTEGER) {
+      return sendError(res, 'A valid assignmentVersion from the document is required', 'INVALID_ASSIGNMENT_VERSION', 400);
+    }
+    const versionFilter = assignmentVersion === 0
+      ? { $or: [{ assignmentVersion: 0 }, { assignmentVersion: { $exists: false } }] }
+      : { assignmentVersion };
+    const document = await Document.findOneAndUpdate({ _id: req.params.id, ...versionFilter },
+      { $set: { reviewerIds: uniqueIds }, $inc: { assignmentVersion: 1 } }, { new: true, runValidators: true });
+    if (!document) {
+      if (!await Document.exists({ _id: req.params.id })) {
+        return sendError(res, 'Document not found', 'DOCUMENT_NOT_FOUND', 404);
+      }
+      return sendError(res, 'Reviewer assignments changed. Reload before saving again.', 'ASSIGNMENT_CONFLICT', 409);
+    }
     auditService.logAudit({ user: req.user._id, action: 'ASSIGN_DOCUMENT_REVIEWERS', resource: 'Document',
-      resourceId: document._id, details: { reviewerIds: uniqueIds } });
-    return sendSuccess(res, { documentId: document._id, reviewerIds: document.reviewerIds }, 'Review assignments updated');
+      resourceId: document._id, details: { reviewerIds: uniqueIds, assignmentVersion: document.assignmentVersion } });
+    return sendSuccess(res, { documentId: document._id, reviewerIds: document.reviewerIds,
+      assignmentVersion: document.assignmentVersion }, 'Review assignments updated');
   } catch (error) { next(error); }
 });
 

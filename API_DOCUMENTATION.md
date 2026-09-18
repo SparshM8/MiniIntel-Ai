@@ -10,6 +10,16 @@
 
 ## 1. Flutter Integration & Environment Setup
 
+### Reviewer Reconciliation Queue
+
+`GET /api/v1/reconciliations/queue` requires a reviewer/admin JWT. Reviewers receive only records belonging to owned or explicitly assigned documents; admins receive records for all existing documents.
+
+Optional query parameters: `page` (1..1000000, default 1), `limit` (1..100, default 20), `documentId` (24 hex characters), `reviewState` (`pending`, `accepted`, `rejected`, `correction_requested`), `outcome` (`matched`, `converted`, `conflict`, `incompatible`, `insufficient_evidence`), and `caseId` (exact case-sensitive lookup, trimmed, maximum 200 characters). Omit unused filters; repeated/unknown parameters or invalid values return `400 INVALID_QUEUE_FILTER`. Anonymous requests return 401; other roles return 403.
+
+Success envelope: `{ "success": true, "data": [...], "meta": { "total": 23, "page": 1, "limit": 20, "pages": 2 }, "pagination": { "total": 23, "page": 1, "limit": 20, "pages": 2 } }`. Counts are permission-scoped. Rows include reconciliation fields, operands, review version and `documentName`, but omit full case snapshots and decision histories. Empty results have `pages: 0`; out-of-range pages have empty data. Ordering is newest creation first, with descending ID as the tie-breaker. Pagination is a live view and may shift as reviews change.
+
+The existing document-specific reconciliation list is unchanged. Deploy the queue API before the updated reviewer UI. For implementation boundaries and test coverage, see [Reconciliation Persistence](docs/planning/RECONCILIATION-PERSISTENCE.md).
+
 ### 1.1 Base URL Configuration by Target Platform
 
 The backend listens by default on port `5000` (or `process.env.PORT`). Flutter apps running on different platforms require specific host addresses to reach the local development server:
@@ -830,7 +840,7 @@ The backend defines three roles:
 
 #### 08.3 Get Document Details & Pages
 - **Method & Path:** `GET /api/v1/documents/:id`
-- **Auth:** Private (Owner or Admin)
+- **Auth:** Private (Owner, Assigned Reviewer or Admin)
 - **Returns:** Full document metadata plus the array of extracted pages (`DocumentPage`) containing OCR/parsed text for each page.
 
 #### 08.4 Download Original File
@@ -890,6 +900,17 @@ The backend defines three roles:
 #### 08.8 Delete Document
 - **Method & Path:** `DELETE /api/v1/documents/:id`
 - **Deletes:** Document record, page extractions, vector chunks, processing jobs, extracted records, and physical disk file.
+
+#### 08.9 Replace Reviewer Assignments
+- **Method & Path:** `PUT /api/v1/documents/:id/reviewers`
+- **Auth:** Admin only.
+- **Request:** `{ "reviewerIds": ["abcdefabcdefabcdefabcdef"], "assignmentVersion": 0 }`
+- Read `data.document.assignmentVersion` from document details before editing. Legacy documents without a stored counter return zero.
+- IDs must be strings containing 24 hexadecimal characters, identify active reviewers, and number at most 100 before deduplication. An empty array explicitly clears assignments.
+- **Success:** `{ "success": true, "data": { "documentId": "111111111111111111111111", "reviewerIds": ["abcdefabcdefabcdefabcdef"], "assignmentVersion": 1 }, "message": "Review assignments updated" }`
+- **Errors:** `400 INVALID_ASSIGNMENT_VERSION` for missing/invalid versions; `400 INVALID_REVIEWERS` for invalid candidates; `404 DOCUMENT_NOT_FOUND`; `409 ASSIGNMENT_CONFLICT` for a stale version. Versions must be nonnegative safe integers below `9007199254740991`.
+- The version match, list replacement and counter increment are atomic. A conflict does not write assignments or an audit event. Reload current state and ask for an explicit new save; never automatically retry a stale write.
+- This endpoint now requires a version. Deploy updated clients with the server; old clients without it fail closed. Other document endpoints are unchanged.
 
 ---
 

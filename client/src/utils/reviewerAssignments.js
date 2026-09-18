@@ -21,6 +21,10 @@ export function parseAssignmentLoad(documentResponse, usersResponse, documentId)
     throw new Error('Unexpected document or user response. Reload before saving.');
   }
   const selected = assignmentIds(document.reviewerIds);
+  const assignmentVersion = document.assignmentVersion;
+  if (!Number.isSafeInteger(assignmentVersion) || assignmentVersion < 0 || assignmentVersion >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Unexpected assignment version. Reload before saving.');
+  }
   const byId = new Map(users.map(user => [user._id.toLowerCase(), user]));
   const choices = users.filter(user => user.role === 'reviewer' && user.status === 'active')
     .map(user => ({ id: user._id.toLowerCase(), name: user.username, department: user.department || '', eligible: true }));
@@ -29,11 +33,13 @@ export function parseAssignmentLoad(documentResponse, usersResponse, documentId)
     const user = byId.get(id);
     choices.push({ id, name: user?.username || `Unavailable reviewer (${id})`, department: '', eligible: false });
   }
-  return { selected, choices: choices.sort((left, right) => left.name.localeCompare(right.name)) };
+  return { selected, assignmentVersion, choices: choices.sort((left, right) => left.name.localeCompare(right.name)) };
 }
 
-export function confirmAssignmentSave(response, documentId, requested) {
-  if (response?.success !== true || response?.data?.documentId !== documentId) {
+export function confirmAssignmentSave(response, documentId, requested, assignmentVersion) {
+  if (response?.success !== true || response?.data?.documentId !== documentId
+    || !Number.isSafeInteger(assignmentVersion) || assignmentVersion < 0 || assignmentVersion >= Number.MAX_SAFE_INTEGER
+    || response.data.assignmentVersion !== assignmentVersion + 1) {
     throw new Error('Assignment save could not be confirmed.');
   }
   const saved = assignmentIds(response.data.reviewerIds);

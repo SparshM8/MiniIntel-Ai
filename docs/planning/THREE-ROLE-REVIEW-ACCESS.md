@@ -37,9 +37,21 @@ success. Failed or malformed loads block saving. An unconfirmed save requires
 a fresh reload because the server may already have applied the write. The UI
 prevents duplicate submission while a request is pending; it does not retry writes.
 
-Assignments still replace the entire list. Concurrent admins are not protected
-by version checks: the last successful write wins. Admin role checks on the server
-remain authoritative; hiding frontend controls is not an authorization boundary.
+Assignments replace the entire list using the `assignmentVersion` returned by
+document detail reads. The server atomically matches and increments that version;
+stale saves receive `409 ASSIGNMENT_CONFLICT` without assignment or audit writes.
+The dialog requires a fresh reload and an explicit new save after a conflict.
+Even clearing and restoring a previous list advances the version.
+
+Existing documents without a stored version read as version zero and initialize
+the counter on their first conditional assignment write; no bulk migration is
+required. Missing or invalid request versions receive `400 INVALID_ASSIGNMENT_VERSION`.
+Deploy the server and updated clients together: old clients must refresh and supply
+the loaded version; unconditional writes are no longer accepted. Successful replies
+include the incremented version. Audit details include it, but audit delivery remains
+the existing asynchronous mechanism, not a transactional guarantee.
+Admin role checks on the server remain authoritative; hiding frontend controls is
+not an authorization boundary.
 
 ## Existing-account deployment gate
 
@@ -66,9 +78,12 @@ authority while they still carry the removed role; this is not a global login ba
 - Assignment HTTP tests cover admin-only writes, active-reviewer eligibility,
   strict string ObjectIds, case-insensitive deduplication, replacement/clearing,
   audit records, denied-write immutability, delegated reads and management denial.
+- Version tests cover simultaneous writers, stale replacement/clearing, malformed
+  or missing versions, and initialization of legacy documents without a counter.
 - Client contract and mocked Chromium tests cover selection/search, removal,
   fresh reopening, failed loads, uncertain saves, duplicate submissions, stale
-  responses, the selection limit, and keyboard/mobile behavior.
+  responses, the selection limit, conflict/reload recovery, version confirmation,
+  and keyboard/mobile behavior.
 
 Tests use synthetic records in temporary MongoDB databases with teardown hooks.
 Passing these tests does not establish real-report accuracy or production capacity.

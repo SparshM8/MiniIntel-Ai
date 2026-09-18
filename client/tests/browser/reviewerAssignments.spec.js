@@ -17,7 +17,7 @@ const dialog = page => page.getByRole('dialog', { name: 'Assign reviewers', exac
 const openDialog = page => page.getByRole('button', { name: 'Assign reviewers for Production.xlsx', exact: true }).click();
 
 async function setup(page, options = {}) {
-  const state = { assignments: options.assignments ?? [alice], puts: [], userRequests: 0 };
+  const state = { assignments: options.assignments ?? [alice], assignmentVersion: 0, puts: [], userRequests: 0 };
   await page.addInitScript(role => localStorage.setItem('userInfo', JSON.stringify({ name: 'Test actor', role, token: 'mock-token' })), options.role || 'admin');
   await page.route('**/*', async route => {
     const url = new URL(route.request().url());
@@ -33,13 +33,15 @@ async function setup(page, options = {}) {
       const payload = route.request().postDataJSON();
       state.puts.push(payload);
       if (options.save) return options.save(route, payload, state);
+      expect(payload.assignmentVersion).toBe(state.assignmentVersion);
       state.assignments = payload.reviewerIds;
-      return route.fulfill({ json: { success: true, data: { documentId: docId, reviewerIds: state.assignments } } });
+      state.assignmentVersion++;
+      return route.fulfill({ json: { success: true, data: { documentId: docId, reviewerIds: state.assignments, assignmentVersion: state.assignmentVersion } } });
     }
     if ([`/api/v1/documents/${docId}`, `/api/v1/documents/${otherId}`].includes(url.pathname)) {
       const id = url.pathname.split('/').at(-1);
       if (options.loadDocument) return options.loadDocument(route, id, state);
-      return route.fulfill({ json: { success: true, data: { document: { ...source(id), reviewerIds: id === docId ? state.assignments : [bob] } } } });
+      return route.fulfill({ json: { success: true, data: { document: { ...source(id), reviewerIds: id === docId ? state.assignments : [bob], assignmentVersion: state.assignmentVersion } } } });
     }
     return route.fulfill({ json: { success: true, data: [] } });
   });
@@ -59,12 +61,12 @@ test('admin loads current assignments, searches, saves and explicitly clears', a
   await expect(modal.getByText('2 / 100 selected')).toBeVisible();
   await modal.getByRole('button', { name: 'Save assignments', exact: true }).click();
   await expect(modal.getByRole('status')).toHaveText('Reviewer assignments saved (2).');
-  expect(state.puts).toEqual([{ reviewerIds: [alice, bob] }]);
+  expect(state.puts).toEqual([{ reviewerIds: [alice, bob], assignmentVersion: 0 }]);
   await modal.getByRole('button', { name: 'Clear selection' }).click();
   await expect(modal.getByText('Saving will remove all delegated reviewers from this document.')).toBeVisible();
   await modal.getByRole('button', { name: 'Save assignments', exact: true }).click();
   await expect(modal.getByRole('status')).toHaveText('All reviewer assignments removed.');
-  expect(state.puts.at(-1)).toEqual({ reviewerIds: [] });
+  expect(state.puts.at(-1)).toEqual({ reviewerIds: [], assignmentVersion: 1 });
 });
 
 for (const role of ['user', 'reviewer', 'official']) {
@@ -127,7 +129,7 @@ test('pending save suppresses duplicate submits and prevents Escape dismissal', 
   const held = new Promise(resolve => { release = resolve; });
   const state = await setup(page, { save: async (route, payload) => {
     await held;
-    await route.fulfill({ json: { success: true, data: { documentId: docId, reviewerIds: payload.reviewerIds } } });
+    await route.fulfill({ json: { success: true, data: { documentId: docId, reviewerIds: payload.reviewerIds, assignmentVersion: payload.assignmentVersion + 1 } } });
   } });
   await openDialog(page);
   const modal = dialog(page);
@@ -165,7 +167,7 @@ test('closing during a delayed load cannot overwrite another document dialog', a
   const held = new Promise(resolve => { release = resolve; });
   await setup(page, { loadDocument: async (route, id) => {
     if (id === docId) await held;
-    await route.fulfill({ json: { data: { document: { ...source(id), reviewerIds: id === docId ? [alice] : [bob] } } } });
+    await route.fulfill({ json: { data: { document: { ...source(id), reviewerIds: id === docId ? [alice] : [bob], assignmentVersion: 0 } } } });
   } });
   await openDialog(page);
   await expect(dialog(page).getByRole('status')).toHaveText('Loading assignments...');
@@ -215,6 +217,7 @@ test('empty reviewer list remains usable without enabling a no-op save', async (
 test('lost save response requires reload even when server applied the update', async ({ page }) => {
   const state = await setup(page, { save: (route, payload, current) => {
     current.assignments = payload.reviewerIds;
+    current.assignmentVersion++;
     return route.abort('failed');
   } });
   await openDialog(page);
@@ -226,6 +229,47 @@ test('lost save response requires reload even when server applied the update', a
   await expect(dialog(page).getByRole('checkbox', { name: 'Bob', exact: true })).toBeChecked();
   await expect(dialog(page).getByRole('status')).toHaveCount(0);
   expect(state.puts).toHaveLength(1);
+});
+
+test('stale save requires reload and sends the refreshed version on the next explicit save', async ({ page }) => {
+  const state = await setup(page, { save: (route, payload, current) => {
+    if (payload.assignmentVersion !== current.assignmentVersion) {
+      return route.fulfill({ status: 409, json: { success: false, error: 'ASSIGNMENT_CONFLICT' } });
+    }
+    current.assignments = payload.reviewerIds;
+    current.assignmentVersion++;
+    return route.fulfill({ json: { success: true, data: { documentId: docId,
+      reviewerIds: current.assignments, assignmentVersion: current.assignmentVersion } } });
+  } });
+  await openDialog(page);
+  const modal = dialog(page);
+  await modal.getByRole('checkbox', { name: 'Bob', exact: true }).check();
+  state.assignments = [bob];
+  state.assignmentVersion = 1;
+  await modal.getByRole('button', { name: 'Save assignments', exact: true }).click();
+  await expect(modal.getByRole('alert')).toContainText('Your changes were not saved');
+  await expect(modal.getByRole('button', { name: 'Save assignments', exact: true })).toBeDisabled();
+  await expect(modal.getByRole('status')).toHaveCount(0);
+  expect(state.puts).toHaveLength(1);
+  expect(state.assignments).toEqual([bob]);
+  await modal.getByRole('button', { name: 'Reload assignments' }).click();
+  await expect(modal.getByRole('checkbox', { name: /Alice/ })).not.toBeChecked();
+  await expect(modal.getByRole('checkbox', { name: 'Bob', exact: true })).toBeChecked();
+  await modal.getByRole('button', { name: 'Clear selection' }).click();
+  await modal.getByRole('button', { name: 'Save assignments', exact: true }).click();
+  await expect(modal.getByRole('status')).toHaveText('All reviewer assignments removed.');
+  expect(state.puts.at(-1)).toEqual({ reviewerIds: [], assignmentVersion: 1 });
+  expect(state.assignmentVersion).toBe(2);
+});
+
+test('missing assignment version blocks saving', async ({ page }) => {
+  const state = await setup(page, { loadDocument: (route, id) => route.fulfill({ json: {
+    data: { document: { ...source(id), reviewerIds: [alice] } }
+  } }) });
+  await openDialog(page);
+  await expect(dialog(page).getByRole('alert')).toContainText('Unexpected assignment version');
+  await expect(dialog(page).getByRole('button', { name: 'Save assignments', exact: true })).toBeDisabled();
+  expect(state.puts).toHaveLength(0);
 });
 
 for (const width of [390, 1440]) {
