@@ -390,6 +390,11 @@ exports.rejectReport = async (req, res, next) => {
       return sendError(res, 'Report not found', 'NOT_FOUND', 404);
     }
 
+    if (req.user.role !== 'admin' &&
+        (req.user.role !== 'reviewer' || report.reviewerId?.toString() !== req.user._id.toString())) {
+      return sendError(res, 'Only the assigned reviewer or an admin can reject this report', 'FORBIDDEN', 403);
+    }
+
     if (report.status !== 'review') {
       return sendError(res, 'Only reports in "review" status can be rejected', 'INVALID_STATUS', 400);
     }

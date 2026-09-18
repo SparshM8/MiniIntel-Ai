@@ -168,3 +168,72 @@ test('body-less resubmission revalidates the retained reviewer assignment', asyn
   await User.updateOne({ _id: reviewer._id }, { $set: { status: 'active' } });
   assert.equal((await submit(report, 'POST', 'submit-review', owner)).status, 200);
 });
+
+for (const method of ['POST', 'PUT']) {
+  test(`${method} rejection denies unassigned reviewers without side effects`, async () => {
+    for (const reviewerId of [undefined, new mongoose.Types.ObjectId()]) {
+      const report = await Report.create({ title: 'Restricted review', type: 'summary',
+        generatedBy: owner._id, status: 'review', reviewerId });
+      const beforeDecision = await Report.findById(report.id).lean();
+      const result = await submit(report, method, 'reject', reviewer, { reason: 'Not assigned' });
+      assert.equal(result.status, 403, JSON.stringify(result.body));
+      assert.deepEqual(await Report.findById(report.id).lean(), beforeDecision);
+      assert.equal(await AuditLog.countDocuments({ resourceId: report._id }), 0);
+      assert.equal(await Notification.countDocuments({ relatedId: report._id }), 0);
+    }
+  });
+
+  test(`${method} assigned reviewer and admin can reject once with persisted reason and history`, async () => {
+    for (const actor of [reviewer, admin]) {
+      const report = await Report.create({ title: 'Review decision', type: 'summary', generatedBy: owner._id,
+        reviewerId: actor === reviewer ? reviewer._id : undefined, status: 'review',
+        content: { markdown: 'Evidence' }, version: 4 });
+      const result = await submit(report, method, 'reject', actor, { reason: '  Correct the cited value  ' });
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      const saved = await Report.findById(report.id).lean();
+      assert.equal(saved.status, 'rejected');
+      assert.equal(saved.reviewerComments, 'Correct the cited value');
+      assert.equal(saved.reviewerId.toString(), actor.id);
+      assert.equal(saved.version, 5);
+      assert.deepEqual(saved.previousVersions[0].content, { markdown: 'Evidence' });
+      const audit = await AuditLog.findOne({ resourceId: report._id, action: 'REJECT_REPORT' });
+      assert.equal(audit.user.toString(), actor.id);
+      assert.equal((await submit(report, method, 'reject', actor, { reason: 'Again' })).status, 400);
+      assert.equal(await AuditLog.countDocuments({ resourceId: report._id }), 1);
+    }
+  });
+
+  test(`${method} decisions enforce active roles and admin-only final approval`, async () => {
+    const report = await Report.create({ title: 'Approval', type: 'summary', generatedBy: owner._id,
+      reviewerId: reviewer._id, status: 'review' });
+    const beforeDecision = await Report.findById(report.id).lean();
+    for (const action of ['approve', 'reject']) {
+      assert.equal((await submit(report, method, action, null, { reason: 'Decision' })).status, 401);
+      assert.equal((await submit(report, method, action, owner, { reason: 'Decision' })).status, 403);
+    }
+    assert.equal((await submit(report, method, 'approve', reviewer, {})).status, 403);
+    assert.equal((await submit(report, method, 'reject', reviewer, { reason: ' ' })).status, 400);
+    await User.updateOne({ _id: reviewer._id }, { $set: { status: 'suspended' } });
+    assert.equal((await submit(report, method, 'reject', reviewer, { reason: 'Decision' })).status, 403);
+    await User.updateOne({ _id: reviewer._id }, { $set: { status: 'active' } });
+    assert.deepEqual(await Report.findById(report.id).lean(), beforeDecision);
+    const result = await submit(report, method, 'approve', admin);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    const saved = await Report.findById(report.id).lean();
+    assert.equal(saved.status, 'approved');
+    assert.equal(saved.approvedBy.toString(), admin.id);
+    assert.ok(saved.approvedAt);
+    assert.equal((await submit(report, method, 'approve', admin)).status, 400);
+  });
+
+  test(`${method} revoked report assignment cannot reject`, async () => {
+    const report = await Report.create({ title: 'Revoked assignment', type: 'summary', generatedBy: owner._id,
+      reviewerId: reviewer._id, status: 'review' });
+    await Report.updateOne({ _id: report._id }, { $unset: { reviewerId: 1 } });
+    const beforeDecision = await Report.findById(report.id).lean();
+    assert.equal((await submit(report, method, 'reject', reviewer, { reason: 'Decision' })).status, 403);
+    assert.deepEqual(await Report.findById(report.id).lean(), beforeDecision);
+    assert.equal(await AuditLog.countDocuments({ resourceId: report._id }), 0);
+    assert.equal(await Notification.countDocuments({ relatedId: report._id }), 0);
+  });
+}
