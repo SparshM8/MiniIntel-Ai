@@ -830,7 +830,7 @@ The backend defines three roles:
 
 #### 08.3 Get Document Details & Pages
 - **Method & Path:** `GET /api/v1/documents/:id`
-- **Auth:** Private (Owner or Admin)
+- **Auth:** Private (Owner, Assigned Reviewer or Admin)
 - **Returns:** Full document metadata plus the array of extracted pages (`DocumentPage`) containing OCR/parsed text for each page.
 
 #### 08.4 Download Original File
@@ -890,6 +890,17 @@ The backend defines three roles:
 #### 08.8 Delete Document
 - **Method & Path:** `DELETE /api/v1/documents/:id`
 - **Deletes:** Document record, page extractions, vector chunks, processing jobs, extracted records, and physical disk file.
+
+#### 08.9 Replace Reviewer Assignments
+- **Method & Path:** `PUT /api/v1/documents/:id/reviewers`
+- **Auth:** Admin only.
+- **Request:** `{ "reviewerIds": ["abcdefabcdefabcdefabcdef"], "assignmentVersion": 0 }`
+- Read `data.document.assignmentVersion` from document details before editing. Legacy documents without a stored counter return zero.
+- IDs must be strings containing 24 hexadecimal characters, identify active reviewers, and number at most 100 before deduplication. An empty array explicitly clears assignments.
+- **Success:** `{ "success": true, "data": { "documentId": "111111111111111111111111", "reviewerIds": ["abcdefabcdefabcdefabcdef"], "assignmentVersion": 1 }, "message": "Review assignments updated" }`
+- **Errors:** `400 INVALID_ASSIGNMENT_VERSION` for missing/invalid versions; `400 INVALID_REVIEWERS` for invalid candidates; `404 DOCUMENT_NOT_FOUND`; `409 ASSIGNMENT_CONFLICT` for a stale version. Versions must be nonnegative safe integers below `9007199254740991`.
+- The version match, list replacement and counter increment are atomic. A conflict does not write assignments or an audit event. Reload current state and ask for an explicit new save; never automatically retry a stale write.
+- This endpoint now requires a version. Deploy updated clients with the server; old clients without it fail closed. Other document endpoints are unchanged.
 
 ---
 

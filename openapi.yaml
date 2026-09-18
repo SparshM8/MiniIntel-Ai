@@ -735,6 +735,63 @@ paths:
         '200':
           description: Deleted document ID
 
+  /documents/{id}/reviewers:
+    put:
+      tags: [Documents]
+      summary: Replace reviewer assignments with optimistic concurrency (admin only)
+      description: Read assignmentVersion from document details before saving. Legacy documents return zero. Old clients without a version are rejected; deploy updated clients with the server.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviewerIds, assignmentVersion]
+              properties:
+                reviewerIds:
+                  type: array
+                  maxItems: 100
+                  description: Active reviewer IDs; empty clears assignments. Case-insensitive duplicates are normalized.
+                  items: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+                assignmentVersion:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740990
+      responses:
+        '200':
+          description: Assignments replaced and version incremented atomically
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [documentId, reviewerIds, assignmentVersion]
+                    properties:
+                      documentId: { type: string }
+                      reviewerIds:
+                        type: array
+                        items: { type: string }
+                      assignmentVersion: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        '400':
+          description: INVALID_ID, INVALID_REVIEWERS, or INVALID_ASSIGNMENT_VERSION
+        '401':
+          description: Authentication required
+        '403':
+          description: Active admin required
+        '404':
+          description: DOCUMENT_NOT_FOUND
+        '409':
+          description: ASSIGNMENT_CONFLICT; no assignment or audit write. Reload and explicitly save again, never automatically retry.
+
   /documents/{id}/download:
     get:
       tags: [Documents]
@@ -2307,6 +2364,10 @@ components:
         retentionDate: { type: string, format: date-time }
         uploadedAt: { type: string, format: date-time }
         userId: { type: string }
+        reviewerIds:
+          type: array
+          items: { type: string }
+        assignmentVersion: { type: integer, minimum: 0, maximum: 9007199254740991, default: 0 }
 
     PaginatedDocumentResponse:
       type: object

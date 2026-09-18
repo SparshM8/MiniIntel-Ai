@@ -40,7 +40,8 @@ const documentSchema = new mongoose.Schema({
     uploadedAt: { type: Date, default: Date.now },
   processedAt: Date,
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  reviewerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
+  reviewerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  assignmentVersion: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger }
 });
 
 documentSchema.virtual('id').get(function() {

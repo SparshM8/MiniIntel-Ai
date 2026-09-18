@@ -131,11 +131,14 @@ async function deniedWithoutWrites(path, method, body, user, status, code) {
 async function assign(document, reviewerIds, expectedIds) {
   const query = { resourceId: document._id, action: 'ASSIGN_DOCUMENT_REVIEWERS' };
   const previousCount = await AuditLog.countDocuments(query);
-  const response = await request(`/${document.id}/reviewers`, 'PUT', { reviewerIds });
+  const current = await Document.findById(document.id);
+  const assignmentVersion = current.assignmentVersion;
+  const response = await request(`/${document.id}/reviewers`, 'PUT', { reviewerIds, assignmentVersion });
   assert.equal(response.status, 200, JSON.stringify(response.body));
   assert.equal(response.body.success, true);
-  assert.deepEqual(response.body.data, { documentId: document.id, reviewerIds: expectedIds });
+  assert.deepEqual(response.body.data, { documentId: document.id, reviewerIds: expectedIds, assignmentVersion: assignmentVersion + 1 });
   const stored = await Document.findById(document.id).lean();
+  assert.equal(stored.assignmentVersion, assignmentVersion + 1);
   assert.deepEqual(stored.reviewerIds.map(String), expectedIds);
   assert.equal(stored.userId.toString(), owner.id);
   const deadline = Date.now() + 5000;
@@ -150,7 +153,7 @@ async function assign(document, reviewerIds, expectedIds) {
   assert.equal(audit.user.toString(), admin.id);
   assert.equal(audit.resource, 'Document');
   assert.equal(audit.status, 'SUCCESS');
-  assert.deepEqual(audit.details, { reviewerIds: expectedIds });
+  assert.deepEqual(audit.details, { reviewerIds: expectedIds, assignmentVersion: assignmentVersion + 1 });
 }
 
 test('anonymous, owner, and reviewer cannot change assignments or audit logs', async () => {
@@ -173,6 +176,50 @@ test('admin assigns active reviewers, replaces assignments, normalizes exact dup
 test('admin normalizes mixed-case duplicate ObjectIds before validating candidates', async () => {
   const document = await fixture();
   await assign(document, [reviewer.id, reviewer.id.toUpperCase()], [reviewer.id]);
+});
+
+test('concurrent assignment saves accept only one writer for the loaded version', async () => {
+  const document = await fixture();
+  const responses = await Promise.all([reviewer.id, secondReviewer.id].map(id =>
+    request(`/${document.id}/reviewers`, 'PUT', { reviewerIds: [id], assignmentVersion: 0 })));
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
+  const accepted = responses.find(response => response.status === 200);
+  const rejected = responses.find(response => response.status === 409);
+  assert.equal(rejected.body.error, 'ASSIGNMENT_CONFLICT');
+  assert.equal(accepted.body.data.assignmentVersion, 1);
+  const stored = await Document.findById(document.id).lean();
+  assert.deepEqual(stored.reviewerIds.map(String), accepted.body.data.reviewerIds);
+  assert.equal(stored.assignmentVersion, 1);
+});
+
+test('stale sequential saves and clears cannot mutate assignments or audit logs', async () => {
+  const document = await fixture();
+  await assign(document, [reviewer.id], [reviewer.id]);
+  for (const reviewerIds of [[secondReviewer.id], []]) {
+    await deniedWithoutWrites(`/${document.id}/reviewers`, 'PUT', { reviewerIds, assignmentVersion: 0 },
+      admin, 409, 'ASSIGNMENT_CONFLICT');
+  }
+  await assign(document, [], []);
+  await deniedWithoutWrites(`/${document.id}/reviewers`, 'PUT', { reviewerIds: [reviewer.id], assignmentVersion: 0 },
+    admin, 409, 'ASSIGNMENT_CONFLICT');
+});
+
+test('legacy documents expose version zero and initialize it on the first conditional save', async () => {
+  const document = await fixture();
+  await Document.collection.updateOne({ _id: document._id }, { $unset: { assignmentVersion: '' } });
+  const response = await request(`/${document.id}`);
+  assert.equal(response.body.data.document.assignmentVersion, 0);
+  await assign(document, [reviewer.id], [reviewer.id]);
+  await deniedWithoutWrites(`/${document.id}/reviewers`, 'PUT', { reviewerIds: [], assignmentVersion: 0 },
+    admin, 409, 'ASSIGNMENT_CONFLICT');
+});
+
+test('missing and invalid assignment versions never write', async () => {
+  const document = await fixture();
+  for (const assignmentVersion of [undefined, null, '0', -1, 0.5, Number.MAX_SAFE_INTEGER, {}, []]) {
+    await deniedWithoutWrites(`/${document.id}/reviewers`, 'PUT', { reviewerIds: [reviewer.id], assignmentVersion },
+      admin, 400, 'INVALID_ASSIGNMENT_VERSION');
+  }
 });
 
 for (const [name, payload] of [
@@ -219,7 +266,7 @@ test('invalid and missing document IDs are rejected without writes', async () =>
   await fixture([secondReviewer._id]);
   await deniedWithoutWrites('/not-an-id/reviewers', 'PUT', { reviewerIds: [reviewer.id] }, admin, 400, 'INVALID_ID');
   await deniedWithoutWrites(`/${new mongoose.Types.ObjectId()}/reviewers`, 'PUT',
-    { reviewerIds: [reviewer.id] }, admin, 404, 'DOCUMENT_NOT_FOUND');
+    { reviewerIds: [reviewer.id], assignmentVersion: 0 }, admin, 404, 'DOCUMENT_NOT_FOUND');
 });
 
 test('suspended, inactive, and legacy official actors cannot change assignments', async () => {

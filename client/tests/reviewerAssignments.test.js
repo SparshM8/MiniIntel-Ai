@@ -5,7 +5,7 @@ import { assignmentIds, confirmAssignmentSave, MAX_REVIEWERS, parseAssignmentLoa
 const documentId = '111111111111111111111111';
 const first = 'abcdefabcdefabcdefabcdef';
 const second = '222222222222222222222222';
-const doc = ids => ({ success: true, data: { document: { _id: documentId, reviewerIds: ids } } });
+const doc = (ids, assignmentVersion = 0) => ({ success: true, data: { document: { _id: documentId, reviewerIds: ids, assignmentVersion } } });
 const user = (id, role = 'reviewer', status = 'active') => ({ _id: id, username: `User ${id}`, role, status });
 
 test('assignment IDs normalize case and duplicates without accepting malformed values', () => {
@@ -26,6 +26,7 @@ test('load includes active reviewers and preserves unavailable assignments as re
   const missing = '333333333333333333333333';
   const result = parseAssignmentLoad(doc([second, missing]), { data: [user(first), user(second, 'reviewer', 'suspended')] }, documentId);
   assert.deepEqual(result.selected, [second, missing]);
+  assert.equal(result.assignmentVersion, 0);
   assert.equal(result.choices.find(choice => choice.id === first).eligible, true);
   assert.equal(result.choices.find(choice => choice.id === second).eligible, false);
   assert.equal(result.choices.find(choice => choice.id === missing).eligible, false);
@@ -49,11 +50,23 @@ test('load fails closed for missing assignment metadata or malformed envelopes',
 });
 
 test('save confirmation requires correct document, success and exact assignment set', () => {
-  const response = { success: true, data: { documentId, reviewerIds: [first, second] } };
-  assert.deepEqual(confirmAssignmentSave(response, documentId, [second, first]), [first, second]);
+  const response = { success: true, data: { documentId, reviewerIds: [first, second], assignmentVersion: 1 } };
+  assert.deepEqual(confirmAssignmentSave(response, documentId, [second, first], 0), [first, second]);
   for (const malformed of [{}, { ...response, success: false }, { ...response, data: { documentId: second, reviewerIds: [first] } },
     { ...response, data: { documentId } }, { ...response, data: { documentId, reviewerIds: [] } }]) {
-    assert.throws(() => confirmAssignmentSave(malformed, documentId, [first, second]));
+    assert.throws(() => confirmAssignmentSave(malformed, documentId, [first, second], 0));
   }
-  assert.deepEqual(confirmAssignmentSave({ success: true, data: { documentId, reviewerIds: [] } }, documentId, []), []);
+  assert.deepEqual(confirmAssignmentSave({ success: true, data: { documentId, reviewerIds: [], assignmentVersion: 5 } }, documentId, [], 4), []);
+});
+
+test('load and save reject missing, malformed, stale or non-incremented versions', () => {
+  for (const assignmentVersion of [undefined, null, -1, 0.5, '0', Number.MAX_SAFE_INTEGER, Infinity]) {
+    const response = doc([]);
+    response.data.document.assignmentVersion = assignmentVersion;
+    assert.throws(() => parseAssignmentLoad(response, { data: [] }, documentId));
+  }
+  for (const assignmentVersion of [undefined, null, -1, 0, 2, '1']) {
+    assert.throws(() => confirmAssignmentSave({ success: true,
+      data: { documentId, reviewerIds: [first], assignmentVersion } }, documentId, [first], 0));
+  }
 });
