@@ -57,7 +57,7 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci --prefix server --ignore-scripts --no-audit --no-fund
-      - name: Test review writes against a temporary loopback MongoDB
+      - name: Test review writes, assignment races, and permission-scoped queue against temporary MongoDB
         run: npm run test:persistence --prefix server
 
   client-build:
@@ -85,4 +85,13 @@ jobs:
       - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
       - run: npx playwright install chromium
         working-directory: client
-      - run: npm run test:browser --prefix client
+      - name: Test evidence, dashboards, reviewer assignments, and reconciliation queue
+        run: npm run test:browser --prefix client
+      - name: Retain browser screenshots and failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewer-browser-results
+          path: client/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

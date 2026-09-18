@@ -18,6 +18,7 @@ let database, server, base, owner, other, reviewer, document;
 
 before(async () => {
   process.env.JWT_SECRET = secret;
+  process.env.ADMIN_USERNAME = `queue-admin-${randomUUID()}`;
   database = await MongoMemoryServer.create({ binary: { version: '7.0.14', checkMD5: true },
     instance: { ip: '127.0.0.1', dbName: `reconciliation_http_${randomUUID().replaceAll('-', '')}` } });
   await mongoose.connect(database.getUri());
@@ -55,6 +56,81 @@ async function request(path, method = 'GET', body, user = owner) {
 }
 
 let recordId;
+test('review queue scopes counts and pages to accessible documents and reflects revocation', async () => {
+  const queueDocument = await Document.create({ filename: 'queue.csv', originalName: 'queue.csv', mimeType: 'text/csv',
+    fileSize: 1, fileType: 'csv', userId: owner._id, reviewerIds: [reviewer._id] });
+  const hiddenDocument = await Document.create({ filename: 'hidden.csv', originalName: 'hidden.csv', mimeType: 'text/csv',
+    fileSize: 1, fileType: 'csv', userId: other._id });
+  for (const caseId of ['queue.[1]', 'queue.[2]', 'queue.[3]']) {
+    assert.equal((await request(`/documents/${queueDocument.id}`, 'POST', { ...scenarios[0], caseId })).status, 201);
+  }
+  assert.equal((await request(`/documents/${hiddenDocument.id}`, 'POST', { ...scenarios[0], caseId: 'queue.hidden' }, other)).status, 201);
+  const path = '/queue?limit=2';
+  assert.equal((await request(path, 'GET', undefined, null)).status, 401);
+  assert.equal((await request(path)).status, 403);
+  const first = await request(path, 'GET', undefined, reviewer);
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.deepEqual(first.body.meta, { total: 3, page: 1, limit: 2, pages: 2 });
+  assert.equal(first.body.data.length, 2);
+  assert.ok(first.body.data.every(record => record.documentId === queueDocument.id));
+  const second = await request(`${path}&page=2`, 'GET', undefined, reviewer);
+  assert.equal(second.body.data.length, 1);
+  assert.ok(!first.body.data.some(record => record._id === second.body.data[0]._id));
+  const literal = await request('/queue?caseId=queue.%5B1%5D', 'GET', undefined, reviewer);
+  assert.equal(literal.body.meta.total, 1);
+  assert.equal(literal.body.data[0].caseId, 'queue.[1]');
+  const reviewed = await request(`/${literal.body.data[0]._id}/decisions`, 'POST', {
+    requestId: randomUUID(), decision: 'accept', reason: 'Queue evidence verified', expectedVersion: 0
+  }, reviewer);
+  assert.equal(reviewed.status, 200);
+  const filtered = await request(`/queue?reviewState=accepted&outcome=${scenarios[0].expectedOutcome || literal.body.data[0].outcome}&documentId=${queueDocument.id}`, 'GET', undefined, reviewer);
+  assert.equal(filtered.status, 200);
+  assert.equal(filtered.body.meta.total, 1);
+  assert.equal(filtered.body.data[0]._id, literal.body.data[0]._id);
+  const foreign = await request(`/queue?documentId=${hiddenDocument.id}`, 'GET', undefined, reviewer);
+  assert.equal(foreign.body.meta.total, 0);
+  assert.deepEqual(foreign.body.data, []);
+  const outside = await request(`${path}&page=3`, 'GET', undefined, reviewer);
+  assert.deepEqual(outside.body.data, []);
+  assert.equal(outside.body.meta.total, 3);
+  await Document.updateOne({ _id: queueDocument._id }, { $set: { reviewerIds: [] } });
+  const revoked = await request(path, 'GET', undefined, reviewer);
+  assert.deepEqual(revoked.body.data, []);
+  assert.equal(revoked.body.meta.total, 0);
+  await ReconciliationRecord.deleteMany({ documentId: { $in: [queueDocument._id, hiddenDocument._id] } });
+  await Document.deleteMany({ _id: { $in: [queueDocument._id, hiddenDocument._id] } });
+});
+
+test('queue rejects malformed filters without treating them as unrestricted requests', async () => {
+  for (const query of ['page=0', 'page=-1', 'page=1.2', 'page=1000001', 'limit=101', 'limit=0',
+    'page=1&page=2', 'reviewState=unknown', 'outcome=unknown', 'documentId=bad', 'caseId=',
+    `caseId=${'a'.repeat(201)}`, 'caseId[$ne]=', 'unknown=1']) {
+    const result = await request(`/queue?${query}`, 'GET', undefined, reviewer);
+    assert.equal(result.status, 400, query);
+    assert.equal(result.body.error, 'INVALID_QUEUE_FILTER');
+  }
+});
+
+test('queue includes reviewer-owned documents and admin sees every existing document', async () => {
+  const admin = await User.create({ username: process.env.ADMIN_USERNAME, password: 'unused', role: 'admin' });
+  const owned = await Document.create({ filename: 'owned.csv', originalName: 'owned.csv', mimeType: 'text/csv',
+    fileSize: 1, fileType: 'csv', userId: reviewer._id });
+  const created = await request(`/documents/${owned.id}`, 'POST', { ...scenarios[0], caseId: 'reviewer-owned' }, reviewer);
+  assert.equal(created.status, 201);
+  for (const actor of [reviewer, admin]) {
+    const result = await request('/queue?caseId=reviewer-owned', 'GET', undefined, actor);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.meta.total, 1);
+    assert.equal(result.body.data[0].documentName, 'owned.csv');
+    assert.equal(result.body.data[0].caseSnapshot, undefined);
+    assert.equal(result.body.data[0].decisions, undefined);
+  }
+  await Document.deleteOne({ _id: owned._id });
+  assert.equal((await request('/queue?caseId=reviewer-owned', 'GET', undefined, admin)).body.meta.total, 0);
+  await ReconciliationRecord.deleteMany({ documentId: owned._id });
+  await User.deleteOne({ _id: admin._id });
+});
+
 test('anonymous and foreign actors cannot access document reconciliations', async () => {
   assert.equal((await request(`/documents/${document.id}`, 'GET', undefined, null)).status, 401);
   assert.equal((await request(`/documents/${document.id}`, 'POST', scenarios[0], other)).status, 403);

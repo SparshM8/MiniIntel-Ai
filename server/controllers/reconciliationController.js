@@ -1,5 +1,6 @@
 const {
   listReconciliations,
+  listReviewQueue,
   getReconciliation,
   createReconciliation,
   appendDecision
@@ -25,6 +26,13 @@ async function get(req, res) {
   } catch (error) { return handleError(res, error); }
 }
 
+async function queue(req, res) {
+  try {
+    const result = await listReviewQueue({ actor: req.user, query: req.query });
+    return sendSuccess(res, result.records, 'Review queue retrieved', 200, result.meta);
+  } catch (error) { return handleError(res, error); }
+}
+
 async function create(req, res) {
   try {
     const result = await createReconciliation({
@@ -43,4 +51,4 @@ async function decide(req, res) {
   } catch (error) { return handleError(res, error); }
 }
 
-module.exports = { list, get, create, decide };
+module.exports = { list, queue, get, create, decide };

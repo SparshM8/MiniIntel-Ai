@@ -10,6 +10,16 @@
 
 ## 1. Flutter Integration & Environment Setup
 
+### Reviewer Reconciliation Queue
+
+`GET /api/v1/reconciliations/queue` requires a reviewer/admin JWT. Reviewers receive only records belonging to owned or explicitly assigned documents; admins receive records for all existing documents.
+
+Optional query parameters: `page` (1..1000000, default 1), `limit` (1..100, default 20), `documentId` (24 hex characters), `reviewState` (`pending`, `accepted`, `rejected`, `correction_requested`), `outcome` (`matched`, `converted`, `conflict`, `incompatible`, `insufficient_evidence`), and `caseId` (exact case-sensitive lookup, trimmed, maximum 200 characters). Omit unused filters; repeated/unknown parameters or invalid values return `400 INVALID_QUEUE_FILTER`. Anonymous requests return 401; other roles return 403.
+
+Success envelope: `{ "success": true, "data": [...], "meta": { "total": 23, "page": 1, "limit": 20, "pages": 2 }, "pagination": { "total": 23, "page": 1, "limit": 20, "pages": 2 } }`. Counts are permission-scoped. Rows include reconciliation fields, operands, review version and `documentName`, but omit full case snapshots and decision histories. Empty results have `pages: 0`; out-of-range pages have empty data. Ordering is newest creation first, with descending ID as the tie-breaker. Pagination is a live view and may shift as reviews change.
+
+The existing document-specific reconciliation list is unchanged. Deploy the queue API before the updated reviewer UI. For implementation boundaries and test coverage, see [Reconciliation Persistence](docs/planning/RECONCILIATION-PERSISTENCE.md).
+
 ### 1.1 Base URL Configuration by Target Platform
 
 The backend listens by default on port `5000` (or `process.env.PORT`). Flutter apps running on different platforms require specific host addresses to reach the local development server:
