@@ -10,6 +10,18 @@
 
 ## 1. Flutter Integration & Environment Setup
 
+### Report Revision Updates
+
+`PUT /api/v1/reports/:id` retains the existing creator/admin authorization. Every successful update increments the report version, preserves the previous content in `previousVersions`, and returns the current report as `draft`, including edits to reports previously in review or approved. Approval identity/date and previous review date/comments are cleared; the assigned reviewer remains. Clients must use the returned status and submit the revision for review again before approval.
+
+`POST /api/v1/reports/:id/submit-review` and its `PUT /api/v1/reports/:id/submit` alias require the report creator or an admin. Other authenticated actors receive `403 FORBIDDEN`. Only draft/rejected reports can be submitted; other states return `400 INVALID_STATUS`. Optional `reviewerId` must be a 24-character hexadecimal ID belonging to an active reviewer; null, malformed, missing-account, inactive, and wrong-role selections return `400 INVALID_REVIEWER`. Omitting the field preserves and revalidates an existing assignment. A body-less request remains supported; reports without an assignment use the existing administrative notification path. The submission audit records the actual prior status.
+
+`POST /api/v1/reports/:id/reject` and its `PUT` alias require an admin or the report's explicitly assigned reviewer. Unassigned reviewers, including a reviewer who created the report, cannot reject it solely by role or ownership. Revoked assignments are denied on subsequent requests. Existing active-account authentication and non-empty rejection reason validation still apply. Final approval remains admin-only. No new assignment UI or read-access policy is introduced by this change.
+
+Edits, submissions, approvals, and rejections use optimistic concurrency for their database saves. Overlapping requests that load the same report state cannot both save: the stale request receives `409 REPORT_CONFLICT` without writing history, audit, or notifications. Reload the report and reconsider the action before retrying; do not automatically retry writes. The internal MongoDB `__v` counter is separate from the content `version` and advances on each workflow save. Legacy reports without `__v` are conditionally initialized on their first successful workflow save. Deploy all writers together; direct database updates must also participate in version checking.
+
+This protects overlapping server-side saves, not an old browser view submitted after another request has completed: client-supplied version preconditions remain pending. Delete races, direct database assignment changes that bypass versioning, immutable release artifacts, complete historical approval metadata, source snapshots, and draft export markings remain separate requirements. Audit and notification writes are not transactional with the report save. Regression tests cover revisions, submission/decision HTTP aliases, revoked assignments, sequential repeated decisions, and deterministic concurrent edit/submit/approve/reject races for versioned and legacy reports using isolated MongoDB and real JWT authentication. Existing persistence CI automatically includes these tests; the full export workflow remains unverified.
+
 ### Reviewer Reconciliation Queue
 
 `GET /api/v1/reconciliations/queue` requires a reviewer/admin JWT. Reviewers receive only records belonging to owned or explicitly assigned documents; admins receive records for all existing documents.

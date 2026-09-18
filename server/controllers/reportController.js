@@ -1,8 +1,21 @@
 const Report = require('../models/Report');
+const User = require('../models/User');
 const reportService = require('../services/reportService');
 const auditService = require('../services/auditService');
 const notificationService = require('../services/notificationService');
 const { sendSuccess, sendError } = require('../utils/apiResponse');
+
+async function saveReport(report, res) {
+  report.$where = { __v: report.__v === undefined ? { $exists: false } : report.__v };
+  try {
+    await report.save();
+    return true;
+  } catch (error) {
+    if (error.name !== 'VersionError' && error.name !== 'DocumentNotFoundError') throw error;
+    sendError(res, 'Report changed during this request. Reload it before trying again.', 'REPORT_CONFLICT', 409);
+    return false;
+  }
+}
 
 // 1. Get all reports with optional filtering
 exports.getReports = async (req, res, next) => {
@@ -144,7 +157,7 @@ exports.updateReport = async (req, res, next) => {
 
     // Snapshot version before updating
     report.previousVersions.push({
-      content: report.content,
+      content: report.toObject().content,
       version: report.version || 1,
       date: new Date()
     });
@@ -155,12 +168,10 @@ exports.updateReport = async (req, res, next) => {
     }
 
     if (markdown !== undefined) {
-      report.content = report.content || {};
-      report.content.markdown = markdown;
+      report.content = { ...report.content, markdown };
     } else if (content !== undefined) {
       if (typeof content === 'string') {
-        report.content = report.content || {};
-        report.content.markdown = content;
+        report.content = { ...report.content, markdown: content };
       } else if (typeof content === 'object') {
         report.content = {
           ...report.content,
@@ -173,12 +184,13 @@ exports.updateReport = async (req, res, next) => {
       report.language = language;
     }
 
-    // If report was rejected, updating it moves it back to draft
-    if (report.status === 'rejected') {
-      report.status = 'draft';
-    }
+    report.status = 'draft';
+    report.approvedBy = undefined;
+    report.approvedAt = undefined;
+    report.reviewedAt = undefined;
+    report.reviewerComments = '';
 
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -241,14 +253,25 @@ exports.submitForReview = async (req, res, next) => {
       return sendError(res, 'Report not found', 'NOT_FOUND', 404);
     }
 
+    if (req.user.role !== 'admin' && report.generatedBy?.toString() !== req.user._id.toString()) {
+      return sendError(res, 'Not authorized to submit this report', 'FORBIDDEN', 403);
+    }
+
     if (report.status !== 'draft' && report.status !== 'rejected') {
       return sendError(res, `Cannot submit a report with status "${report.status}"`, 'INVALID_STATUS', 400);
     }
 
-    const { reviewerId } = req.body;
+    const reviewerId = req.body?.reviewerId === undefined ? report.reviewerId?.toString() : req.body.reviewerId;
+    if (reviewerId !== undefined) {
+      if (typeof reviewerId !== 'string' || !/^[a-fA-F0-9]{24}$/.test(reviewerId) ||
+          !await User.exists({ _id: reviewerId, role: 'reviewer', status: 'active' })) {
+        return sendError(res, 'An active reviewer ID is required', 'INVALID_REVIEWER', 400);
+      }
+    }
+    const previousStatus = report.status;
     report.status = 'review';
     if (reviewerId) report.reviewerId = reviewerId;
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -256,7 +279,7 @@ exports.submitForReview = async (req, res, next) => {
         action: 'SUBMIT_FOR_REVIEW',
         resource: 'Report',
         resourceId: report._id,
-        details: { reviewerId, previousStatus: report.status }
+        details: { reviewerId, previousStatus }
       });
     } catch (auditErr) {
       console.warn('Audit logging failed:', auditErr.message);
@@ -264,13 +287,13 @@ exports.submitForReview = async (req, res, next) => {
 
     try {
       if (reviewerId) {
-        notificationService.notify(
+        await notificationService.notify(
           reviewerId,
           `Report "${report.title}" has been submitted for your review.`,
           'action', 'review', report._id
         );
       } else {
-        notificationService.notifyAdmins(
+        await notificationService.notifyAdmins(
           `Report "${report.title}" is awaiting review.`,
           'action', 'review', report._id
         );
@@ -339,7 +362,7 @@ exports.approveReport = async (req, res, next) => {
     report.approvedAt = new Date();
     report.reviewerComments = req.body.comments || req.body.reason || '';
     report.reviewedAt = new Date();
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -355,7 +378,7 @@ exports.approveReport = async (req, res, next) => {
 
     try {
       if (report.generatedBy) {
-        notificationService.notify(
+        await notificationService.notify(
           report.generatedBy,
           `Your report "${report.title}" has been approved.`,
           'success', 'approval', report._id
@@ -377,6 +400,11 @@ exports.rejectReport = async (req, res, next) => {
     const report = await Report.findById(req.params.id);
     if (!report) {
       return sendError(res, 'Report not found', 'NOT_FOUND', 404);
+    }
+
+    if (req.user.role !== 'admin' &&
+        (req.user.role !== 'reviewer' || report.reviewerId?.toString() !== req.user._id.toString())) {
+      return sendError(res, 'Only the assigned reviewer or an admin can reject this report', 'FORBIDDEN', 403);
     }
 
     if (report.status !== 'review') {
@@ -401,7 +429,7 @@ exports.rejectReport = async (req, res, next) => {
     report.reviewedAt = new Date();
     report.reviewerId = req.user._id;
     report.version = (report.version || 1) + 1;
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -417,7 +445,7 @@ exports.rejectReport = async (req, res, next) => {
 
     try {
       if (report.generatedBy) {
-        notificationService.notify(
+        await notificationService.notify(
           report.generatedBy,
           `Your report "${report.title}" was rejected: ${report.reviewerComments}`,
           'warning', 'approval', report._id
