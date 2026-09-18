@@ -58,6 +58,87 @@ async function submit(report, method, suffix, actor, body) {
   return { status: response.status, body: await response.json() };
 }
 
+async function raceReportSaves(context, report, requests) {
+  const originalSave = Report.prototype.save;
+  let release;
+  let arrivals = 0;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const timeout = setTimeout(release, 5000);
+  const save = context.mock.method(Report.prototype, 'save', async function (...args) {
+    if (this.id === report.id) {
+      arrivals += 1;
+      if (arrivals === requests.length) release();
+      await barrier;
+    }
+    return originalSave.apply(this, args);
+  });
+  try {
+    const results = await Promise.all(requests.map(request => request()));
+    assert.equal(arrivals, requests.length, 'All requests must reach save before release');
+    return results;
+  } finally {
+    clearTimeout(timeout);
+    save.mock.restore();
+  }
+}
+
+test('concurrent approvals persist one decision and reject the stale save', async context => {
+  const report = await Report.create({ title: 'Concurrent approval', type: 'summary',
+    generatedBy: owner._id, status: 'review' });
+  const results = await raceReportSaves(context, report, [
+    () => submit(report, 'POST', 'approve', admin, { comments: 'First' }),
+    () => submit(report, 'PUT', 'approve', admin, { comments: 'Second' })
+  ]);
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+  assert.equal(results.find(result => result.status === 409).body.error, 'REPORT_CONFLICT');
+  const saved = await Report.findById(report.id).lean();
+  assert.equal(saved.status, 'approved');
+  assert.equal(saved.__v, 1);
+  assert.equal(await AuditLog.countDocuments({ resourceId: report._id }), 1);
+  assert.equal(await Notification.countDocuments({ relatedId: report._id }), 1);
+});
+
+for (const legacy of [false, true]) {
+  for (const [scenario, initialStatus, operations] of [
+    ['approve/reject', 'review', [['POST', 'approve', 'admin'], ['PUT', 'reject', 'reviewer']]],
+    ['reject/reject', 'review', [['POST', 'reject', 'reviewer'], ['PUT', 'reject', 'reviewer']]],
+    ['edit/approve', 'review', [['PUT', '', 'owner'], ['POST', 'approve', 'admin']]],
+    ['edit/reject', 'review', [['PUT', '', 'owner'], ['POST', 'reject', 'reviewer']]],
+    ['edit/edit', 'draft', [['PUT', '', 'owner'], ['PUT', '', 'owner']]],
+    ['submit/submit', 'draft', [['POST', 'submit-review', 'owner'], ['PUT', 'submit', 'owner']]],
+    ['edit/submit', 'draft', [['PUT', '', 'owner'], ['PUT', 'submit', 'owner']]]
+  ]) {
+    test(`${legacy ? 'legacy' : 'versioned'} ${scenario} race preserves only the winning write`, async context => {
+      const actors = { owner, reviewer, admin };
+      const report = await Report.create({ title: 'Concurrent workflow', type: 'summary',
+        generatedBy: owner._id, reviewerId: reviewer._id, status: initialStatus,
+        content: { markdown: 'Original' }, version: 3 });
+      if (legacy) await Report.collection.updateOne({ _id: report._id }, { $unset: { __v: 1 } });
+      const results = await raceReportSaves(context, report, operations.map(([method, suffix, role], index) =>
+        () => submit(report, method, suffix, actors[role], { reason: `Decision ${index}`, markdown: `Edit ${index}` })));
+      assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+      assert.equal(results.find(result => result.status === 409).body.error, 'REPORT_CONFLICT');
+      const winner = results.findIndex(result => result.status === 200);
+      const [, action, role] = operations[winner];
+      const saved = await Report.findById(report.id).lean();
+      assert.equal(saved.__v, 1);
+      assert.equal(saved.status, { approve: 'approved', reject: 'rejected', '': 'draft',
+        'submit-review': 'review', submit: 'review' }[action]);
+      assert.equal(saved.content.markdown, action === '' ? `Edit ${winner}` : 'Original');
+      assert.equal(saved.version, action === '' || action === 'reject' ? 4 : 3);
+      assert.equal(saved.previousVersions.length, action === '' || action === 'reject' ? 1 : 0);
+      if (saved.previousVersions.length) assert.deepEqual(saved.previousVersions[0].content, { markdown: 'Original' });
+      assert.equal(saved.approvedBy?.toString(), action === 'approve' ? admin.id : undefined);
+      const audits = await AuditLog.find({ resourceId: report._id }).lean();
+      assert.equal(audits.length, 1);
+      assert.equal(audits[0].user.toString(), actors[role].id);
+      assert.equal(audits[0].action, { approve: 'APPROVE_REPORT', reject: 'REJECT_REPORT',
+        '': 'UPDATE_REPORT', 'submit-review': 'SUBMIT_FOR_REVIEW', submit: 'SUBMIT_FOR_REVIEW' }[action]);
+      assert.equal(await Notification.countDocuments({ relatedId: report._id }), action === '' ? 0 : 1);
+    });
+  }
+}
+
 for (const status of ['approved', 'review', 'rejected', 'draft']) {
   for (const [variant, changes, expectedMarkdown] of [
     ['markdown', { markdown: 'Corrected evidence' }, 'Corrected evidence'],

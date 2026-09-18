@@ -29,6 +29,6 @@ const ReportSchema = new mongoose.Schema({
     percentage: { type: Number, default: 0 }
   },
   language: { type: String, default: 'en' }
-}, { timestamps: true });
+}, { timestamps: true, optimisticConcurrency: true });
 
 module.exports = mongoose.model('Report', ReportSchema);

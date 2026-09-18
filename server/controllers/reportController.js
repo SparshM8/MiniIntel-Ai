@@ -5,6 +5,18 @@ const auditService = require('../services/auditService');
 const notificationService = require('../services/notificationService');
 const { sendSuccess, sendError } = require('../utils/apiResponse');
 
+async function saveReport(report, res) {
+  report.$where = { __v: report.__v === undefined ? { $exists: false } : report.__v };
+  try {
+    await report.save();
+    return true;
+  } catch (error) {
+    if (error.name !== 'VersionError' && error.name !== 'DocumentNotFoundError') throw error;
+    sendError(res, 'Report changed during this request. Reload it before trying again.', 'REPORT_CONFLICT', 409);
+    return false;
+  }
+}
+
 // 1. Get all reports with optional filtering
 exports.getReports = async (req, res, next) => {
   try {
@@ -178,7 +190,7 @@ exports.updateReport = async (req, res, next) => {
     report.reviewedAt = undefined;
     report.reviewerComments = '';
 
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -259,7 +271,7 @@ exports.submitForReview = async (req, res, next) => {
     const previousStatus = report.status;
     report.status = 'review';
     if (reviewerId) report.reviewerId = reviewerId;
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -350,7 +362,7 @@ exports.approveReport = async (req, res, next) => {
     report.approvedAt = new Date();
     report.reviewerComments = req.body.comments || req.body.reason || '';
     report.reviewedAt = new Date();
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -366,7 +378,7 @@ exports.approveReport = async (req, res, next) => {
 
     try {
       if (report.generatedBy) {
-        notificationService.notify(
+        await notificationService.notify(
           report.generatedBy,
           `Your report "${report.title}" has been approved.`,
           'success', 'approval', report._id
@@ -417,7 +429,7 @@ exports.rejectReport = async (req, res, next) => {
     report.reviewedAt = new Date();
     report.reviewerId = req.user._id;
     report.version = (report.version || 1) + 1;
-    await report.save();
+    if (!await saveReport(report, res)) return;
 
     try {
       await auditService.logAudit({
@@ -433,7 +445,7 @@ exports.rejectReport = async (req, res, next) => {
 
     try {
       if (report.generatedBy) {
-        notificationService.notify(
+        await notificationService.notify(
           report.generatedBy,
           `Your report "${report.title}" was rejected: ${report.reviewerComments}`,
           'warning', 'approval', report._id

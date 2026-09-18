@@ -1372,6 +1372,8 @@ paths:
       responses:
         '200':
           description: Updated report
+        '409':
+          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
     delete:
       tags: [Reports]
       summary: Delete report
@@ -1396,6 +1398,8 @@ paths:
       responses:
         '200':
           description: Status changed to review
+        '409':
+          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
 
   /reports/{id}/approve:
     post:
@@ -1412,11 +1416,13 @@ paths:
           description: Report approved
         '403':
           description: Only administrators can approve reports
+        '409':
+          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
 
   /reports/{id}/reject:
     post:
       tags: [Reports]
-      summary: Reject report with reason (Reviewer/Admin)
+      summary: Reject report with reason (Assigned Reviewer/Admin)
       parameters:
         - in: path
           name: id
@@ -1435,6 +1441,10 @@ paths:
       responses:
         '200':
           description: Report rejected
+        '403':
+          description: Only the assigned reviewer or an administrator can reject reports
+        '409':
+          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
 
   /reports/{id}/evidence:
     get:
