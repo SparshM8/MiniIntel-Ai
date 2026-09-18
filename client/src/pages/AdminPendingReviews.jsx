@@ -122,8 +122,8 @@ const PendingReviews = () => {
                     <td className="px-6 py-4">{report.generatedBy?.username || 'Unknown'}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-1 text-xs">
-                        <span className="text-amber-600 dark:text-amber-400 font-medium">Conf: {Math.round((report.confidenceScore || 0) * 100)}%</span>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">Cov: {report.evidenceCoverage?.percentage || 0}%</span>
+                        <span className="text-amber-600 dark:text-amber-400 font-medium">Similarity: {report.metricBasis === 'retrieval-similarity-v1' && Number.isFinite(report.confidenceScore) ? `${Math.round(report.confidenceScore * 100)}%` : 'N/A'}</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">Accuracy not evaluated</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-slate-400 dark:text-slate-400 whitespace-nowrap">{formatDate(report.updatedAt)}</td>

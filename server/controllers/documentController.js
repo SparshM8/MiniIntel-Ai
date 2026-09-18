@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { getUploadPath } = require('../config/storage');
 const Document = require('../models/Document');
 const DocumentPage = require('../models/DocumentPage');
 const ProcessingJob = require('../models/ProcessingJob');
@@ -198,8 +199,7 @@ const deleteDocument = async (req, res) => {
     await DocumentPage.deleteMany({ documentId: req.params.id });
     await ProcessingJob.deleteMany({ documentId: req.params.id });
 
-    const baseDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..');
-    const filePath = path.join(baseDir, 'uploads', document.filename);
+    const filePath = getUploadPath(document.filename);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }

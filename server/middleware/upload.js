@@ -3,11 +3,11 @@ const path = require('path');
 const uuid = require('uuid');
 
 const fs = require('fs');
+const { getUploadDir: configuredUploadDir } = require('../config/storage');
 
 const getUploadDir = () => {
   // Use /tmp/uploads for Vercel, else local uploads folder
-  const baseDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..');
-  const uploadDir = path.join(baseDir, 'uploads');
+  const uploadDir = configuredUploadDir();
   
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });

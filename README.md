@@ -17,7 +17,6 @@ Combining multimodal document extraction, rule-based and algorithmic data valida
 | **Live REST API (v1)** | `https://mini-intel-ai-sih.vercel.app/api/v1` | Production REST API layer supporting Web & Mobile clients |
 | **Flutter Client API Guide** | [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) | Complete guide for Flutter developers (Android, iOS, Windows) |
 | **OpenAPI 3.0 Specification** | [openapi.yaml](./openapi.yaml) | Validated OpenAPI 3.0.3 specification (118 paths, 16 schemas) |
-| **End-to-End Test Report** | [API_TEST_REPORT.md](./API_TEST_REPORT.md) | 100% pass verification audit across 122 automated test scenarios |
 
 ---
 
@@ -65,7 +64,7 @@ MineIntel AI automates the end-to-end data lifecycle through an autonomous 8-sta
                              ▼
   ┌────────────────────────────────────────────────────────┐
   │  Stage 4: Knowledge Base Chunking & Vector Embeddings  │
-  │  • 768-dimensional Google Gemini Embeddings            │
+  │  • Provider-generated document embeddings              │
   │  • MongoDB vector storage with multi-attribute filters │
   └──────────────────────────┬─────────────────────────────┘
                              │
@@ -73,13 +72,13 @@ MineIntel AI automates the end-to-end data lifecycle through an autonomous 8-sta
   ┌────────────────────────────────────────────────────────┐
   │  Stage 5: RAG Semantic Search & Evidence Linking       │
   │  • Grounded citations and exact page-level provenance  │
-  │  • In-memory caching for sub-millisecond retrieval     │
+  │  • In-memory query caching                             │
   └──────────────────────────┬─────────────────────────────┘
                              │
                              ▼
   ┌────────────────────────────────────────────────────────┐
   │  Stage 6: AI Conversational Assistant & Reasoning     │
-  │  • Google Gemini Pro (`gemini-3.6-flash`) LLM          │
+  │  • Configurable OpenAI-compatible chat provider         │
   │  • Mathematical calculations & multi-step synthesis    │
   └──────────────────────────┬─────────────────────────────┘
                              │
@@ -250,6 +249,8 @@ MineIntel AI enforces strict security and role-based access control:
 
 ## 💻 Technology Stack
 
+For implementation details and operational limits, start with the [documentation index](docs/README.md).
+
 ### Frontend Application
 - **Framework**: React 18 SPA via Vite
 - **Styling**: Tailwind CSS, PostCSS, Custom Design System
@@ -257,14 +258,15 @@ MineIntel AI enforces strict security and role-based access control:
 - **HTTP Client**: Axios with Centralized Interceptors
 - **Charts & Telemetry**: Recharts & Custom KPI Widgets
 
-### Cross-Platform Mobile / Desktop Support
+### Cross-Platform Integration Guidance
+- **Scope**: The API guide includes Flutter integration examples; this repository contains the React client, not a maintained Flutter application.
 - **Client Technology**: Flutter (Dart) targeting Android, iOS, and Windows Desktop
 - **Networking**: Dio with Automatic Token Refresh Interceptors
 - **Secure Persistence**: `flutter_secure_storage` (Android Keystore, iOS Keychain, Windows DPAPI)
 - **File Management**: `file_picker`, `path_provider`, `open_filex`
 
 ### Backend Architecture
-- **Runtime**: Node.js `20.x` LTS
+- **Runtime**: Node.js `24.x` LTS
 - **Framework**: Express.js `^4.21.0`
 - **Database / ODM**: MongoDB Atlas via Mongoose `^8.6.0`
 - **Authentication**: Stateless JSON Web Tokens (`jsonwebtoken` `^9.0.3`) & `bcryptjs` `^3.0.3`
@@ -272,14 +274,14 @@ MineIntel AI enforces strict security and role-based access control:
 - **Document Extractors**:
   - `pdf-parse-new` `^2.1.0` (Native PDF text parsing)
   - `mammoth` `^1.8.0` & `docx` `^9.7.1` (Microsoft Word documents)
-  - `xlsx` `^0.18.5` & `exceljs` `^4.4.0` (Excel spreadsheets)
+  - `xlsx` `^0.18.5` (Excel spreadsheets)
   - `officeparser` `^7.8.0` (PowerPoint `.pptx` presentations)
   - `tesseract.js` `^7.0.0` (Optical Character Recognition for scanned images/PDFs)
   - `pdfkit` `^0.20.1` (High-fidelity PDF report generation)
 
 ### Artificial Intelligence & Vector Search
-- **LLM Engine**: Google Gemini Pro (`gemini-3.6-flash`) via `@google/generative-ai`
-- **Vector Embeddings**: Google Gemini Embedding (`gemini-embedding-2`, 768 Dimensions)
+- **LLM Integration**: OpenAI SDK with configurable provider endpoint/key and chat-model candidates
+- **Vector Embeddings**: Requests `gemini-embedding-2`; confirm model availability and returned dimensions with the configured provider
 - **RAG Engine**: Cosine similarity retrieval with sliding chunk windows, metadata filters, and in-memory query cache
 
 ---
@@ -287,7 +289,7 @@ MineIntel AI enforces strict security and role-based access control:
 ## 📁 Repository Structure
 
 ```
-MineIntel-AI-SIH26023/
+MiniIntel-Ai/
 ├── client/                               # React 18 + Vite Frontend
 │   ├── src/
 │   │   ├── api/                          # Centralized REST API Service Modules
@@ -310,25 +312,24 @@ MineIntel-AI-SIH26023/
 │
 ├── server/                               # Express.js REST API Backend
 │   ├── config/                           # Database & CORS configuration
-│   ├── controllers/                      # Business logic controllers (16 controllers)
+│   ├── controllers/                      # Business logic controllers
 │   ├── middleware/                       # Auth, Upload, Error & Response handlers
-│   ├── models/                           # Mongoose database models (12 schemas)
+│   ├── models/                           # Mongoose database models
 │   ├── routes/
 │   │   ├── api/v1/                       # Modern REST API v1 (22 router modules)
 │   │   └── ...                           # Legacy backward-compatible routes
-│   ├── services/                         # LLM, OCR, RAG, Ingestion, Reports (25 services)
+│   ├── services/                         # LLM, OCR, RAG, Ingestion, Reports
 │   ├── validators/                       # Input validators for all v1 endpoints
 │   ├── package.json
 │   └── server.js                         # Application entry point
 │
-├── scratch/                              # Verification test suites & scripts
-│   ├── run_full_api_verification.js      # Complete 122-scenario test runner
+├── scratch/                              # Manual diagnostics and live verification scripts
+│   ├── run_full_api_verification.js      # Live API verification; inspect before running
 │   └── ...
 │
+├── docs/                                 # Setup, architecture, testing and deployment guides
 ├── API_DOCUMENTATION.md                  # Comprehensive Flutter Integration Guide
 ├── openapi.yaml                          # Complete OpenAPI 3.0.3 Specification
-├── API_TEST_REPORT.md                    # End-to-End API Verification Report
-├── MineIntel_AI_API_Endpoint_Reference.txt# Master 4,300+ line endpoint directory
 ├── vercel.json                           # Vercel deployment configuration
 └── README.md                             # Project Documentation
 ```
@@ -337,10 +338,12 @@ MineIntel-AI-SIH26023/
 
 ## 🛠️ Local Installation & Setup
 
+Use the [setup guide](docs/SETUP.md) for configuration precedence, Windows commands, provider compatibility and troubleshooting. The following is a quick start; replace all example credentials privately.
+
 ### Prerequisites
-- **Node.js**: v20.x or later installed
+- **Node.js**: v24.x as declared in the package manifests
 - **MongoDB**: MongoDB Atlas connection URI or local MongoDB instance (v6.0+)
-- **Google AI API Key**: Gemini API key for LLM and embedding services
+- **AI Provider**: OpenAI-compatible endpoint/key supporting the service's requested chat and embedding models
 
 ### 1. Clone the Repository
 ```bash
@@ -362,7 +365,9 @@ MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/mineintel?r
 JWT_SECRET=your_super_secret_jwt_key_here
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your_secure_admin_password
-GEMINI_API_KEY=your_google_gemini_api_key
+LLM_API_KEY=your_provider_api_key
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+GEMINI_MODEL=replace_with_a_supported_chat_model
 CLIENT_URL=http://localhost:5173
 ```
 
@@ -386,22 +391,18 @@ npm run dev
 
 ## 🧪 Testing & Verification
 
-The repository contains automated verification test suites covering all REST v1 modules, backward compatibility, and error handling:
+Use the maintained [testing guide](docs/TESTING.md) for isolated tests, browser checks, CI coverage and safe live verification.
 
 ```bash
-# Execute the comprehensive 122-scenario API verification test suite
-node scratch/run_full_api_verification.js
+npm test --prefix server
+npm test --prefix client
+npm run test:integration --prefix server
+npm run test:persistence --prefix server
+npm run test:browser --prefix client
+npm run build --prefix client
 ```
 
-### Test Coverage Highlights:
-- ✅ **122/122 Test Scenarios Passed (100% Pass Rate)**
-- ✅ JWT Authentication, Token Refresh & Role-Based Access Control
-- ✅ Multi-format Multipart Document Uploads & SHA-256 Deduplication
-- ✅ Automated Extraction & Human-in-the-Loop Field Auditing
-- ✅ Rule Validation, Severity Penalties & Quality Score Algorithms
-- ✅ RAG Vector Similarity Search & Evidence Citations
-- ✅ Report Review Workflows & Multi-Format Exports (PDF, DOCX, CSV, JSON)
-- ✅ DMS, MIS, and GIS Spatial Integration Endpoints
+Install dependencies and Playwright Chromium as described in the guide before running these commands. Historical test counts are not a guarantee for the current commit. Live scripts under `scratch/` may mutate data and require a separate approved test environment.
 
 ---
 

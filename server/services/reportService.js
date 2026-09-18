@@ -1,5 +1,7 @@
 const Report = require('../models/Report');
 const Document = require('../models/Document');
+const User = require('../models/User');
+const { reportRetrievalMetrics, reportRetrievalLabel } = require('../utils/reportRetrievalMetrics');
 const ragService = require('./ragService');
 const llmService = require('./llmService');
 const auditService = require('./auditService');
@@ -152,10 +154,15 @@ const generateReport = async (data, type, userId, reqContext = {}) => {
   if (subject) ragFilters.subject = subject;
 
   // 1. Retrieve bounded, scoped chunks (bounded topK = 5)
+  const requestingUser = await User.findById(userId).select('_id role status').lean();
+  if (!requestingUser || ['inactive', 'suspended'].includes(requestingUser.status)) {
+    throw new Error('Active report requester required');
+  }
   let rawChunks = [];
   try {
     rawChunks = await ragService.searchSimilar(searchQuery, 5, {
       reqContext,
+      user: requestingUser,
       filters: ragFilters
     });
   } catch (ragErr) {
@@ -210,6 +217,7 @@ const generateReport = async (data, type, userId, reqContext = {}) => {
   try {
     const intelligenceResult = await miningIntelligenceService.analyzeDataAndFindAnomalies({
       reqContext,
+      user: requestingUser,
       filters: ragFilters,
       documentId,
       mineName,
@@ -338,19 +346,7 @@ ${boundedFullContext}`;
     throw limitError;
   }
 
-  // 6. Compute evidence coverage
-  const citedSources = similarChunks.filter(c => (c.similarityScore || 0) > 0.25);
-  const evidenceCoverage = {
-    total: similarChunks.length,
-    cited: citedSources.length,
-    percentage: similarChunks.length > 0 ? Math.round((citedSources.length / similarChunks.length) * 100) : 0
-  };
-
-  // 7. Compute confidence score from avg similarity
-  const avgSimilarity = similarChunks.length > 0
-    ? similarChunks.reduce((sum, c) => sum + (c.similarityScore || 0), 0) / similarChunks.length
-    : 0.85;
-  const confidenceScore = Math.min(0.98, Math.max(0.75, Math.round(avgSimilarity * 100) / 100));
+  const { confidenceScore, evidenceCoverage, metricBasis } = reportRetrievalMetrics(similarChunks);
 
   // 8. Persist genuine report to MongoDB ONLY upon successful generation
   const report = new Report({
@@ -385,6 +381,7 @@ ${boundedFullContext}`;
     previousVersions: [],
     generatedBy: userId,
     confidenceScore,
+    metricBasis,
     evidenceCoverage
   });
 
@@ -431,7 +428,7 @@ const generatePdfBuffer = async (report, markdown, sources) => {
     doc.fontSize(8.5).fillColor('#334155').font('Helvetica-Bold');
     doc.text(`Type: ${report.type || 'Report'}   |   Status: ${(report.status || 'draft').toUpperCase()}   |   Date: ${new Date(report.createdAt || Date.now()).toLocaleDateString('en-GB')}   |   Version: ${report.version || 1}`, 58, startY + 7);
     doc.fontSize(8).fillColor('#64748b').font('Helvetica');
-    doc.text(`Confidence Score: ${Math.round((report.confidenceScore || 0) * 100)}%   |   Evidence Coverage: ${report.evidenceCoverage?.percentage || 0}%`, 58, startY + 20);
+    doc.text(reportRetrievalLabel(report), 58, startY + 20);
 
     doc.y = startY + 44;
     doc.moveDown(0.5);
@@ -600,7 +597,7 @@ const generateDocxBuffer = async (report, markdown, sources) => {
   if (report.confidenceScore || report.evidenceCoverage) {
     children.push(new Paragraph({
       children: [
-        new TextRun({ text: `Confidence Score: ${Math.round((report.confidenceScore || 0) * 100)}%   |   Evidence Coverage: ${report.evidenceCoverage?.percentage || 0}%`, italics: true, color: '64748B' })
+        new TextRun({ text: reportRetrievalLabel(report), italics: true, color: '64748B' })
       ]
     }));
   }
@@ -802,8 +799,8 @@ const exportReport = async (reportId, format = 'json') => {
           version: report.version,
           generatedBy: report.generatedBy?.username,
           createdAt: report.createdAt,
-          confidenceScore: report.confidenceScore,
-          evidenceCoverage: report.evidenceCoverage,
+          ...reportRetrievalMetrics(sources),
+          accuracyEvaluated: false,
           content: markdown,
           sources
         }, null, 2)
@@ -840,7 +837,7 @@ const exportReport = async (reportId, format = 'json') => {
     }
 
     case 'md': {
-      const fullMd = `# ${report.title}\n\n**Type:** ${report.type}  \n**Status:** ${report.status}  \n**Generated:** ${report.createdAt}  \n**Confidence:** ${Math.round((report.confidenceScore || 0) * 100)}%  \n**Evidence Coverage:** ${report.evidenceCoverage?.percentage || 0}%\n\n---\n\n${markdown}`;
+      const fullMd = `# ${report.title}\n\n**Type:** ${report.type}  \n**Status:** ${report.status}  \n**Generated:** ${report.createdAt}  \n${reportRetrievalLabel(report)}\n\n---\n\n${markdown}`;
       return {
         contentType: 'text/markdown',
         filename: `${safeFilename}.md`,
@@ -862,8 +859,8 @@ const getReportEvidence = async (reportId) => {
   return {
     reportId: report._id,
     title: report.title,
-    confidenceScore: report.confidenceScore || 0,
-    evidenceCoverage: report.evidenceCoverage || { total: 0, cited: 0, percentage: 0 },
+    ...reportRetrievalMetrics(sources),
+    accuracyEvaluated: false,
     totalSources: sources.length,
     sources
   };

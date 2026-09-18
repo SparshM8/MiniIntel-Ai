@@ -4,9 +4,16 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
 const auditService = require('../services/auditService');
+const { getJwtSecret } = require('../config/jwt');
+
+router.use((req, res, next) => {
+  try { getJwtSecret(); next(); } catch (error) {
+    res.status(503).json({ message: 'Authentication is not configured' });
+  }
+});
 
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '30d' });
+  return jwt.sign({ id }, getJwtSecret(), { expiresIn: '30d', algorithm: 'HS256' });
 };
 
 router.post('/login', async (req, res) => {
@@ -49,6 +56,10 @@ router.post('/login', async (req, res) => {
       console.log('[AUTH] Admin user created successfully');
     }
 
+    if (user.status === 'suspended' || user.status === 'inactive') {
+      return res.status(403).json({ message: 'Account is not active' });
+    }
+
     // Always enforce admin role in DB
     if (user.role !== 'admin') {
       user.role = 'admin';
@@ -67,8 +78,10 @@ router.post('/login', async (req, res) => {
   // ─── NORMAL USER authentication path ─────────────────────────────────
   const user = await User.findOne({ username });
   if (user && (await user.matchPassword(password))) {
-    // Force role to 'user' for non-admin identities
-    if (user.role !== 'user') {
+    if (user.status === 'suspended' || user.status === 'inactive') {
+      return res.status(403).json({ message: 'Account is not active' });
+    }
+    if (user.role === 'admin') {
       user.role = 'user';
       await user.save();
     }
@@ -77,7 +90,7 @@ router.post('/login', async (req, res) => {
     return res.json({
       _id: user._id,
       username: user.username,
-      role: 'user',
+      role: user.role,
       token: generateToken(user._id)
     });
   }

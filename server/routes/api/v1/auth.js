@@ -12,9 +12,16 @@ const {
 } = require('../../../validators/authValidator');
 const auditService = require('../../../services/auditService');
 const { sendSuccess, sendError } = require('../../../utils/apiResponse');
+const { getJwtSecret } = require('../../../config/jwt');
+
+router.use((req, res, next) => {
+  try { getJwtSecret(); next(); } catch (error) {
+    sendError(res, 'Authentication is not configured', 'AUTH_CONFIG_ERROR', 503);
+  }
+});
 
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '30d' });
+  return jwt.sign({ id }, getJwtSecret(), { expiresIn: '30d', algorithm: 'HS256' });
 };
 
 /**
@@ -103,6 +110,9 @@ router.post('/login', validate(validateLogin), async (req, res, next) => {
         });
       }
 
+      if (user.status === 'suspended' || user.status === 'inactive') {
+        return sendError(res, 'Account is not active', 'ACCOUNT_INACTIVE', 403);
+      }
       if (user.role !== 'admin') {
         user.role = 'admin';
       }
@@ -163,7 +173,7 @@ router.post('/logout', async (req, res, next) => {
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       try {
         const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+        const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] });
         userId = decoded.id;
       } catch (err) {
         // Token expired or invalid, logout still proceeds cleanly
@@ -323,7 +333,7 @@ router.post('/refresh', async (req, res, next) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+      decoded = jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] });
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
         return sendError(res, 'Token expired, please log in again', 'TOKEN_EXPIRED', 401);

@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { sendError } = require('../utils/apiResponse');
+const { getJwtSecret } = require('../config/jwt');
 
 /**
  * Authenticate JWT token and attach user to req.user
@@ -11,7 +12,7 @@ const authenticate = async (req, res, next) => {
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
       token = req.headers.authorization.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+      const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] });
       const user = await User.findById(decoded.id).select('-password');
 
       if (!user) {
