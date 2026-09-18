@@ -5,7 +5,17 @@ const auditService = require('../services/auditService');
 const notificationService = require('../services/notificationService');
 const { sendSuccess, sendError } = require('../utils/apiResponse');
 
-async function saveReport(report, res) {
+async function saveReport(report, res, expectedVersion) {
+  if (expectedVersion !== undefined) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+      sendError(res, 'expectedVersion must be a non-negative safe integer', 'INVALID_REPORT_VERSION', 400);
+      return false;
+    }
+    if (expectedVersion !== (report.__v ?? 0)) {
+      sendError(res, 'Report changed since it was viewed. Reload it before trying again.', 'REPORT_CONFLICT', 409);
+      return false;
+    }
+  }
   report.$where = { __v: report.__v === undefined ? { $exists: false } : report.__v };
   try {
     await report.save();
@@ -190,7 +200,7 @@ exports.updateReport = async (req, res, next) => {
     report.reviewedAt = undefined;
     report.reviewerComments = '';
 
-    if (!await saveReport(report, res)) return;
+    if (!await saveReport(report, res, req.body?.expectedVersion)) return;
 
     try {
       await auditService.logAudit({
@@ -271,7 +281,7 @@ exports.submitForReview = async (req, res, next) => {
     const previousStatus = report.status;
     report.status = 'review';
     if (reviewerId) report.reviewerId = reviewerId;
-    if (!await saveReport(report, res)) return;
+    if (!await saveReport(report, res, req.body?.expectedVersion)) return;
 
     try {
       await auditService.logAudit({
@@ -362,7 +372,7 @@ exports.approveReport = async (req, res, next) => {
     report.approvedAt = new Date();
     report.reviewerComments = req.body.comments || req.body.reason || '';
     report.reviewedAt = new Date();
-    if (!await saveReport(report, res)) return;
+    if (!await saveReport(report, res, req.body?.expectedVersion)) return;
 
     try {
       await auditService.logAudit({
@@ -429,7 +439,7 @@ exports.rejectReport = async (req, res, next) => {
     report.reviewedAt = new Date();
     report.reviewerId = req.user._id;
     report.version = (report.version || 1) + 1;
-    if (!await saveReport(report, res)) return;
+    if (!await saveReport(report, res, req.body?.expectedVersion)) return;
 
     try {
       await auditService.logAudit({

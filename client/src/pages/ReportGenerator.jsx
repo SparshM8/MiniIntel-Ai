@@ -126,6 +126,13 @@ const ReportGenerator = () => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [workflowError, setWorkflowError] = useState(null);
+  const [reportConflict, setReportConflict] = useState(false);
+  const actionRef = useRef(false);
+  const reportLoadRef = useRef(0);
+  const expectedVersion = report?.__v === undefined ? 0 : report.__v;
+  const invalidVersion = !Number.isSafeInteger(expectedVersion) || expectedVersion < 0;
+  const workflowBlocked = actionLoading || loadingReport || generating || reportConflict || invalidVersion;
 
   const stepTimerRef = useRef(null);
   const cooldownTimerRef = useRef(null);
@@ -188,14 +195,21 @@ const ReportGenerator = () => {
   }, [reportType, period, mineName, titleManuallyEdited]);
 
   // Load report by ID
-  const loadReportById = async (id, fallbackList = []) => {
-    if (!id) return;
+  const loadReportById = async (id) => {
+    if (!id || actionRef.current || isGeneratingRef.current) return;
+    const requestId = ++reportLoadRef.current;
     setLoadingReport(true);
     try {
       const res = await api.get(`/reports/${id}`);
+      if (requestId !== reportLoadRef.current) return;
       const loadedReport = res.data?.data || res.data;
+      if (!loadedReport || loadedReport._id !== id) throw new Error('Invalid report response');
       if (loadedReport) {
         setReport(loadedReport);
+        setReportConflict(false);
+        setWorkflowError(null);
+        setShowRejectModal(false);
+        setRejectReason('');
         localStorage.setItem('mineintel_active_report_id', loadedReport._id);
         setSearchParams({ id: loadedReport._id }, { replace: true });
 
@@ -219,13 +233,13 @@ const ReportGenerator = () => {
         if (params.includeAppendix !== undefined) setIncludeAppendix(params.includeAppendix);
       }
     } catch (err) {
+      if (requestId !== reportLoadRef.current) return;
       console.warn(`Could not load report ${id}:`, err.message);
       localStorage.removeItem('mineintel_active_report_id');
-      if (fallbackList.length > 0 && fallbackList[0]._id !== id) {
-        setReport(fallbackList[0]);
-      }
+      setReportConflict(true);
+      setWorkflowError(err.response?.data?.message || 'Report reload failed.');
     } finally {
-      setLoadingReport(false);
+      if (requestId === reportLoadRef.current) setLoadingReport(false);
     }
   };
 
@@ -241,7 +255,7 @@ const ReportGenerator = () => {
       const savedId = localStorage.getItem('mineintel_active_report_id');
       const targetId = urlId || savedId || (list.length > 0 ? list[0]._id : null);
       if (targetId) {
-        await loadReportById(targetId, list);
+        await loadReportById(targetId);
       }
     };
     init();
@@ -253,6 +267,11 @@ const ReportGenerator = () => {
   }, []);
 
   const handleNewReport = () => {
+    if (actionRef.current || loadingReport || isGeneratingRef.current) return;
+    setReportConflict(false);
+    setWorkflowError(null);
+    setShowRejectModal(false);
+    setRejectReason('');
     setReport(null);
     setSelectedDoc('');
     setPeriod('');
@@ -275,7 +294,7 @@ const ReportGenerator = () => {
   };
 
   const handleGenerate = async () => {
-    if (isGeneratingRef.current || generating || cooldownSeconds > 0) return;
+    if (actionRef.current || loadingReport || isGeneratingRef.current || generating || cooldownSeconds > 0) return;
 
     isGeneratingRef.current = true;
     setGenerating(true);
@@ -315,6 +334,10 @@ const ReportGenerator = () => {
       const generatedReport = res.data?.data || res.data;
 
       setReport(generatedReport);
+      setReportConflict(false);
+      setWorkflowError(null);
+      setShowRejectModal(false);
+      setRejectReason('');
       localStorage.setItem('mineintel_active_report_id', generatedReport._id);
       setSearchParams({ id: generatedReport._id }, { replace: true });
       fetchRecentReports();
@@ -409,52 +432,49 @@ const ReportGenerator = () => {
   };
 
   // Workflow Handlers
-  const handleSubmitForReview = async () => {
-    if (!report) return;
+  const writeReportAction = async (action, payload = {}) => {
+    if (!report || actionRef.current || workflowBlocked) return;
+    actionRef.current = true;
     setActionLoading(true);
+    setWorkflowError(null);
     try {
-      const res = await api.put(`/reports/${report._id}/submit`);
+      const res = await api.put(`/reports/${report._id}/${action}`, { ...payload, expectedVersion });
       const updated = res.data?.data || res.data;
-      setReport(updated);
-      fetchRecentReports();
-    } catch (e) {
-      alert(e.message || 'Submission failed');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleApproveReport = async () => {
-    if (!report) return;
-    if (!confirm('Approve this official mining report for executive distribution?')) return;
-    setActionLoading(true);
-    try {
-      const res = await api.put(`/reports/${report._id}/approve`, { comments: 'Approved by Administrator' });
-      const updated = res.data?.data || res.data;
-      setReport(updated);
-      fetchRecentReports();
-    } catch (e) {
-      alert(e.message || 'Approval failed');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleRejectReport = async () => {
-    if (!report || !rejectReason.trim()) return;
-    setActionLoading(true);
-    try {
-      const res = await api.put(`/reports/${report._id}/reject`, { reason: rejectReason.trim() });
-      const updated = res.data?.data || res.data;
+      if (updated?._id !== report._id || !Number.isSafeInteger(updated.__v) || updated.__v <= expectedVersion) {
+        setReportConflict(true);
+        setWorkflowError('Report response could not be verified.');
+        return;
+      }
       setReport(updated);
       fetchRecentReports();
       setShowRejectModal(false);
       setRejectReason('');
     } catch (e) {
-      alert(e.message || 'Rejection failed');
+      if (e.response?.status === 409) {
+        setReportConflict(true);
+        setWorkflowError('Report changed elsewhere.');
+        setShowRejectModal(false);
+        setRejectReason('');
+      } else {
+        setWorkflowError(e.response?.data?.message || e.message || 'Report action failed');
+      }
     } finally {
+      actionRef.current = false;
       setActionLoading(false);
     }
+  };
+
+  const handleSubmitForReview = () => writeReportAction('submit');
+
+  const handleApproveReport = async () => {
+    if (!report || actionRef.current || workflowBlocked) return;
+    if (!confirm('Approve this official mining report for executive distribution?')) return;
+    await writeReportAction('approve', { comments: 'Approved by Administrator' });
+  };
+
+  const handleRejectReport = async () => {
+    if (!report || !rejectReason.trim()) return;
+    await writeReportAction('reject', { reason: rejectReason.trim() });
   };
 
   // Break report into main content and evidence appendix
@@ -619,10 +639,11 @@ const ReportGenerator = () => {
                 value={report?._id || ''}
                 onChange={(e) => {
                   if (e.target.value) {
-                    loadReportById(e.target.value, recentReports);
+                    loadReportById(e.target.value);
                   }
                 }}
-                disabled={generating || loadingReport}
+                disabled={generating || loadingReport || actionLoading}
+                aria-label="Loaded report"
                 className="bg-white dark:bg-[#161922] border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-white focus:outline-none focus:border-amber-500 max-w-[240px] truncate shadow-2xs"
               >
                 <option value="" disabled>Select saved document...</option>
@@ -637,7 +658,7 @@ const ReportGenerator = () => {
 
           <button
             onClick={handleNewReport}
-            disabled={generating}
+            disabled={generating || loadingReport || actionLoading}
             className="px-3 py-1.5 bg-white dark:bg-[#161922] hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
           >
             <Plus className="w-3.5 h-3.5 text-amber-500" />
@@ -985,7 +1006,7 @@ const ReportGenerator = () => {
           {/* Generate Report Primary Action Button */}
           <button
             onClick={handleGenerate}
-            disabled={generating || cooldownSeconds > 0}
+            disabled={generating || loadingReport || actionLoading || cooldownSeconds > 0}
             className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-sm shadow-amber-500/25 active:scale-[0.99]"
           >
             {generating ? (
@@ -1032,7 +1053,7 @@ const ReportGenerator = () => {
               {error.retryable && (
                 <button
                   onClick={handleGenerate}
-                  disabled={generating || cooldownSeconds > 0}
+                  disabled={generating || loadingReport || actionLoading || cooldownSeconds > 0}
                   className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11px] flex items-center gap-1.5 transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className="w-3 h-3" />
@@ -1051,7 +1072,7 @@ const ReportGenerator = () => {
               <div className="border-b border-slate-200 dark:border-slate-800 px-4 py-3 bg-slate-50/90 dark:bg-[#13151b] shrink-0 space-y-2.5">
                 {/* Row 1: Title, Classification & Review Status */}
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className="flex items-center gap-2.5 min-w-0 w-full sm:w-auto sm:flex-1">
                     <FileText className="w-5 h-5 text-amber-500 shrink-0" />
                     <div className="min-w-0">
                       <h2 className="font-extrabold text-slate-900 dark:text-white text-sm sm:text-base truncate" title={report.title}>
@@ -1066,7 +1087,7 @@ const ReportGenerator = () => {
                   </div>
 
                   {/* Status Badges & Quick Review Workflow Buttons */}
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
                       report.status === 'approved' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-500/30' :
                       report.status === 'review' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-500/30' :
@@ -1080,8 +1101,8 @@ const ReportGenerator = () => {
                     {(report.status === 'draft' || report.status === 'rejected') && (
                       <button
                         onClick={handleSubmitForReview}
-                        disabled={actionLoading}
-                        className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                        disabled={workflowBlocked}
+                        className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center gap-1 shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Send className="w-3 h-3" />
                         <span>Submit for Review</span>
@@ -1091,8 +1112,8 @@ const ReportGenerator = () => {
                     {report.status === 'review' && user?.role === 'admin' && (
                       <button
                         onClick={handleApproveReport}
-                        disabled={actionLoading}
-                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                        disabled={workflowBlocked}
+                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center gap-1 shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <ThumbsUp className="w-3 h-3" />
                         <span>Approve Report</span>
@@ -1102,8 +1123,8 @@ const ReportGenerator = () => {
                     {report.status === 'review' && (user?.role === 'admin' || user?.role === 'reviewer') && (
                       <button
                         onClick={() => setShowRejectModal(true)}
-                        disabled={actionLoading}
-                        className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                        disabled={workflowBlocked}
+                        className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center gap-1 shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <ThumbsDown className="w-3 h-3" />
                         <span>Reject...</span>
@@ -1113,6 +1134,19 @@ const ReportGenerator = () => {
                 </div>
 
                 {/* Status Detail Callouts */}
+                {(workflowError || invalidVersion) && (
+                  <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-red-700 dark:text-red-300 py-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="min-w-0 break-words">{workflowError || 'Report version is invalid.'}</span>
+                    {(reportConflict || invalidVersion) && (
+                      <button type="button" onClick={() => loadReportById(report._id)} disabled={loadingReport || actionLoading}
+                        className="flex items-center gap-1 border border-current rounded px-2 py-1 disabled:opacity-50">
+                        <RefreshCw className={`w-3 h-3 ${loadingReport ? 'animate-spin' : ''}`} />
+                        Reload report
+                      </button>
+                    )}
+                  </div>
+                )}
                 {report.status === 'approved' && (
                   <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 rounded-lg flex items-start gap-2 text-xs text-emerald-800 dark:text-emerald-300">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
@@ -1446,7 +1480,7 @@ const ReportGenerator = () => {
                 <AlertCircle className="w-4 h-4" />
                 <span>Reject Report &amp; Return to Draft</span>
               </div>
-              <button onClick={() => setShowRejectModal(false)} className="text-slate-400 hover:text-slate-600">
+              <button aria-label="Close rejection" disabled={actionLoading} onClick={() => setShowRejectModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1458,6 +1492,8 @@ const ReportGenerator = () => {
             <div>
               <label className={labelClass}>Rejection Reason / Comments</label>
               <textarea
+                aria-label="Rejection Reason / Comments"
+                disabled={actionLoading}
                 value={rejectReason}
                 onChange={e => setRejectReason(e.target.value)}
                 placeholder="e.g. Reconciliation discrepancy in Q3 production tonnage. Please re-check seam excavation figures..."
@@ -1469,6 +1505,7 @@ const ReportGenerator = () => {
               <button
                 type="button"
                 onClick={() => setShowRejectModal(false)}
+                disabled={actionLoading}
                 className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300"
               >
                 Cancel
@@ -1476,7 +1513,7 @@ const ReportGenerator = () => {
               <button
                 type="button"
                 onClick={handleRejectReport}
-                disabled={!rejectReason.trim() || actionLoading}
+                disabled={!rejectReason.trim() || workflowBlocked}
                 className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors disabled:opacity-50"
               >
                 {actionLoading ? 'Rejecting...' : 'Confirm Rejection'}

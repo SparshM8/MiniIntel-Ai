@@ -82,12 +82,67 @@ async function raceReportSaves(context, report, requests) {
   }
 }
 
+for (const [method, suffix, role, status] of [
+  ['PUT', '', 'owner', 'draft'],
+  ['POST', 'submit-review', 'owner', 'draft'],
+  ['PUT', 'submit', 'owner', 'draft'],
+  ['POST', 'approve', 'admin', 'review'],
+  ['PUT', 'approve', 'admin', 'review'],
+  ['POST', 'reject', 'reviewer', 'review'],
+  ['PUT', 'reject', 'reviewer', 'review']
+]) {
+  test(`${method} ${suffix || 'edit'} validates expectedVersion without stale write side effects`, async () => {
+    const actors = { owner, reviewer, admin };
+    const report = await Report.create({ title: 'Viewed report', type: 'summary', generatedBy: owner._id,
+      reviewerId: reviewer._id, status, content: { markdown: 'Original' } });
+    report.title = 'Changed after viewing';
+    await report.save();
+    const beforeWrite = await Report.findById(report.id).lean();
+    for (const expectedVersion of [0, null, '1', -1, 1.5, true, {}, [], Number.MAX_SAFE_INTEGER + 1]) {
+      const result = await submit(report, method, suffix, actors[role], {
+        expectedVersion, markdown: 'Changed', reason: 'Decision'
+      });
+      assert.equal(result.status, expectedVersion === 0 ? 409 : 400, JSON.stringify(result.body));
+      assert.equal(result.body.error, expectedVersion === 0 ? 'REPORT_CONFLICT' : 'INVALID_REPORT_VERSION');
+      assert.deepEqual(await Report.findById(report.id).lean(), beforeWrite);
+      assert.equal(await AuditLog.countDocuments({ resourceId: report._id }), 0);
+      assert.equal(await Notification.countDocuments({ relatedId: report._id }), 0);
+    }
+    const result = await submit(report, method, suffix, actors[role], {
+      expectedVersion: 1, markdown: 'Changed', reason: 'Decision'
+    });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal((await Report.findById(report.id)).__v, 2);
+  });
+
+  test(`${method} ${suffix || 'edit'} accepts zero expectedVersion for legacy reports`, async () => {
+    const actors = { owner, reviewer, admin };
+    const report = await Report.create({ title: 'Legacy view', type: 'summary', generatedBy: owner._id,
+      reviewerId: reviewer._id, status });
+    await Report.collection.updateOne({ _id: report._id }, { $unset: { __v: 1 } });
+    const beforeWrite = await Report.findById(report.id).lean();
+    const denied = await submit(report, method, suffix, actors[role], {
+      expectedVersion: 1, markdown: 'Changed', reason: 'Decision'
+    });
+    assert.equal(denied.status, 409);
+    assert.equal(denied.body.error, 'REPORT_CONFLICT');
+    assert.deepEqual(await Report.findById(report.id).lean(), beforeWrite);
+    assert.equal(await AuditLog.countDocuments({ resourceId: report._id }), 0);
+    assert.equal(await Notification.countDocuments({ relatedId: report._id }), 0);
+    const result = await submit(report, method, suffix, actors[role], {
+      expectedVersion: 0, markdown: 'Changed', reason: 'Decision'
+    });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal((await Report.findById(report.id)).__v, 1);
+  });
+}
+
 test('concurrent approvals persist one decision and reject the stale save', async context => {
   const report = await Report.create({ title: 'Concurrent approval', type: 'summary',
     generatedBy: owner._id, status: 'review' });
   const results = await raceReportSaves(context, report, [
-    () => submit(report, 'POST', 'approve', admin, { comments: 'First' }),
-    () => submit(report, 'PUT', 'approve', admin, { comments: 'Second' })
+    () => submit(report, 'POST', 'approve', admin, { comments: 'First', expectedVersion: 0 }),
+    () => submit(report, 'PUT', 'approve', admin, { comments: 'Second', expectedVersion: 0 })
   ]);
   assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
   assert.equal(results.find(result => result.status === 409).body.error, 'REPORT_CONFLICT');

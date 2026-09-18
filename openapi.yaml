@@ -1353,6 +1353,7 @@ paths:
     put:
       tags: [Reports]
       summary: Edit report content
+      description: Optional expectedVersion checks the viewed __v (zero when absent). Stale tokens return 409 REPORT_CONFLICT; malformed tokens return 400 INVALID_REPORT_VERSION. Omission preserves legacy behavior.
       parameters:
         - in: path
           name: id
@@ -1369,11 +1370,14 @@ paths:
                 content: { type: object }
                 markdown: { type: string }
                 language: { type: string }
+                expectedVersion: { type: integer, minimum: 0, maximum: 9007199254740991 }
       responses:
         '200':
           description: Updated report
+        '400':
+          description: Invalid payload or INVALID_REPORT_VERSION for a malformed expectedVersion
         '409':
-          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
+          description: REPORT_CONFLICT - stale expectedVersion or concurrent write. Reload before retrying; do not automatically retry writes.
     delete:
       tags: [Reports]
       summary: Delete report
@@ -1390,39 +1394,64 @@ paths:
     post:
       tags: [Reports]
       summary: Submit draft report for review
+      description: Optional expectedVersion checks the viewed __v (zero when absent). Stale tokens return 409 REPORT_CONFLICT; malformed tokens return 400 INVALID_REPORT_VERSION. Also supported by PUT /reports/{id}/submit.
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reviewerId: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+                expectedVersion: { type: integer, minimum: 0, maximum: 9007199254740991 }
       responses:
         '200':
           description: Status changed to review
+        '400':
+          description: INVALID_STATUS, INVALID_REVIEWER, or INVALID_REPORT_VERSION
         '409':
-          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
+          description: REPORT_CONFLICT - stale expectedVersion or concurrent write. Reload before retrying; do not automatically retry writes.
 
   /reports/{id}/approve:
     post:
       tags: [Reports]
       summary: Approve report (ADMIN ONLY)
-      description: Strictly restricted to admin.
+      description: Strictly restricted to admin. Optional expectedVersion checks the viewed __v (zero when absent). Stale tokens return 409 REPORT_CONFLICT; malformed tokens return 400 INVALID_REPORT_VERSION. Also supported by the PUT alias.
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comments: { type: string }
+                reason: { type: string }
+                expectedVersion: { type: integer, minimum: 0, maximum: 9007199254740991 }
       responses:
         '200':
           description: Report approved
+        '400':
+          description: INVALID_STATUS or INVALID_REPORT_VERSION
         '403':
           description: Only administrators can approve reports
         '409':
-          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
+          description: REPORT_CONFLICT - stale expectedVersion or concurrent write. Reload before retrying; do not automatically retry writes.
 
   /reports/{id}/reject:
     post:
       tags: [Reports]
       summary: Reject report with reason (Assigned Reviewer/Admin)
+      description: Optional expectedVersion checks the viewed __v (zero when absent). Stale tokens return 409 REPORT_CONFLICT; malformed tokens return 400 INVALID_REPORT_VERSION. Also supported by the PUT alias.
       parameters:
         - in: path
           name: id
@@ -1438,13 +1467,16 @@ paths:
               properties:
                 reason: { type: string }
                 comment: { type: string }
+                expectedVersion: { type: integer, minimum: 0, maximum: 9007199254740991 }
       responses:
         '200':
           description: Report rejected
+        '400':
+          description: Invalid reason, INVALID_STATUS, or INVALID_REPORT_VERSION
         '403':
           description: Only the assigned reviewer or an administrator can reject reports
         '409':
-          description: REPORT_CONFLICT - report changed during this request. Reload before retrying; do not automatically retry writes.
+          description: REPORT_CONFLICT - stale expectedVersion or concurrent write. Reload before retrying; do not automatically retry writes.
 
   /reports/{id}/evidence:
     get:
